@@ -89,7 +89,7 @@ def main():
     output = root / 'dist' / 'ios'
     output.mkdir(parents=True, exist_ok=True)
     version = re.search(r'^version:\s*(\S+)', (root / 'pubspec.yaml').read_text(), re.MULTILINE).group(1)
-    build_name = version.split('-')[0] if variant.lite else version.split('+')[0]
+    build_name = version.split('+')[0].split('-')[0]
     release_arguments = [*variant.flutter_arguments, '--build-name=' + build_name]
     artifacts = []
     if options.export_options:
