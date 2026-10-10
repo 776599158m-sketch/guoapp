@@ -44,24 +44,25 @@ var (
 	huangguoAISlugs     = []string{"recommend", "newest", "ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai", "ranks/hot"}
 	huangguoAITypeNames = map[string]string{"recommend": "精选推荐", "newest": "最近上新", "ai-duanju": "AI成人短剧", "ai-manju": "AI成人漫剧", "ai-huanlian": "AI换脸", "ai-mogai": "AI魔改", "ranks/hot": "排行榜"}
 
-	reDetailHref      = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/detail/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
-	reDramaCardStart  = regexp.MustCompile(`(?is)<div\b[^>]*class=["'][^"']*\bhg-drama-card\b[^"']*["'][^>]*>`)
-	reVideoCard       = regexp.MustCompile(`(?is)<article\b[^>]*class=["'][^"']*\bvideo-card\b[^"']*["'][^>]*>.*?</article>`)
-	reAnyArticle      = regexp.MustCompile(`(?is)<article\b[^>]*>.*?</article>`)
-	reHuangguoLink    = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/(?:series|video)/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
-	reAIEpisodeLink   = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/video/[^"']+)["'][^>]*>.*?</a>`)
-	reTitleTag        = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-	reH1Tag           = regexp.MustCompile(`(?is)<h1[^>]*>(.*?)</h1>`)
-	reDescMeta        = regexp.MustCompile(`(?is)<meta\b[^>]*(?:name|property)=["'](?:description|og:description)["'][^>]*content=["']([^"']+)["'][^>]*>`)
-	reEpisodeNumber   = regexp.MustCompile(`(?i)(?:第\s*0*(\d+)\s*(?:集|话|期)|(?:更新至|共|全)\s*0*(\d+)\s*(?:集|话|期)|(?:episode|ep)\s*#?\s*0*(\d+))`)
-	reResolution      = regexp.MustCompile(`(?i)RESOLUTION\s*=\s*(\d+)x(\d+)`)
-	reBandwidth       = regexp.MustCompile(`(?i)(?:AVERAGE-)?BANDWIDTH\s*=\s*(\d+)`)
-	reDataHLS         = regexp.MustCompile(`(?is)data-hls=["']([^"']+)["']`)
-	reDataPlaySrc     = regexp.MustCompile(`(?is)data-play-src=["']([^"']+)["']`)
-	reMediaFieldValue = regexp.MustCompile(`(?is)["']?(?:videoSrc|videoUrl|playUrl|src|url)["']?\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)(?:[^"']*)?)["']`)
-	reDateText        = regexp.MustCompile(`\d{4}-\d{1,2}-\d{1,2}`)
-	reViewsText       = regexp.MustCompile(`(?i)[0-9]+(?:\.[0-9]+)?\s*[w万]?\s*次播放`)
-	reScoreText       = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)?\s*分`)
+	reDetailHref         = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/detail/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
+	reDramaCardStart     = regexp.MustCompile(`(?is)<div\b[^>]*class=["'][^"']*\bhg-drama-card\b[^"']*["'][^>]*>`)
+	reVideoCard          = regexp.MustCompile(`(?is)<article\b[^>]*class=["'][^"']*\bvideo-card\b[^"']*["'][^>]*>.*?</article>`)
+	reAnyArticle         = regexp.MustCompile(`(?is)<article\b[^>]*>.*?</article>`)
+	reHuangguoLink       = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/(?:series|video)/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
+	reAIEpisodeLink      = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/video/[^"']+)["'][^>]*>.*?</a>`)
+	reAIVideoInitialData = regexp.MustCompile(`(?is)<script\b[^>]*id=["']videoInitialData["'][^>]*>(.*?)</script>`)
+	reTitleTag           = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	reH1Tag              = regexp.MustCompile(`(?is)<h1[^>]*>(.*?)</h1>`)
+	reDescMeta           = regexp.MustCompile(`(?is)<meta\b[^>]*(?:name|property)=["'](?:description|og:description)["'][^>]*content=["']([^"']+)["'][^>]*>`)
+	reEpisodeNumber      = regexp.MustCompile(`(?i)(?:第\s*0*(\d+)\s*(?:集|话|期)|(?:更新至|共|全)\s*0*(\d+)\s*(?:集|话|期)|(?:episode|ep)\s*#?\s*0*(\d+))`)
+	reResolution         = regexp.MustCompile(`(?i)RESOLUTION\s*=\s*(\d+)x(\d+)`)
+	reBandwidth          = regexp.MustCompile(`(?i)(?:AVERAGE-)?BANDWIDTH\s*=\s*(\d+)`)
+	reDataHLS            = regexp.MustCompile(`(?is)data-hls=["']([^"']+)["']`)
+	reDataPlaySrc        = regexp.MustCompile(`(?is)data-play-src=["']([^"']+)["']`)
+	reMediaFieldValue    = regexp.MustCompile(`(?is)["']?(?:videoSrc|videoUrl|playUrl|src|url)["']?\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)(?:[^"']*)?)["']`)
+	reDateText           = regexp.MustCompile(`\d{4}-\d{1,2}-\d{1,2}`)
+	reViewsText          = regexp.MustCompile(`(?i)[0-9]+(?:\.[0-9]+)?\s*[w万]?\s*次播放`)
+	reScoreText          = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)?\s*分`)
 )
 
 type providerEpisode struct {
@@ -754,33 +755,29 @@ func parseHuangguoVideoCards(rawHTML, pageURL string) []Drama {
 
 func parseHuangguoAIEpisodes(rawHTML, pageURL, sourceID string) []providerEpisode {
 	matches := reAIEpisodeLink.FindAllStringSubmatchIndex(rawHTML, -1)
-	seen := map[string]bool{}
+	seen := map[int]bool{}
 	var episodes []providerEpisode
-	usedIndex := map[int]bool{}
+	page, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
 	for _, m := range matches {
 		if len(m) < 4 || m[2] < 0 || m[3] < 0 {
 			continue
 		}
 		href := rawHTML[m[2]:m[3]]
 		fullURL := resolveProviderURL(pageURL, href)
-		linkHTML := rawHTML[m[0]:m[1]]
-		title := firstNonEmpty(extractAttr(linkHTML, "title", "aria-label"), cleanText(linkHTML))
-		key := aiEpisodeKey(href, sourceID)
-		if key == "" {
-			key = fmt.Sprintf("auto-%d", len(episodes)+1)
-		}
-		if seen[key] || seen[fullURL] {
+		address, err := url.Parse(fullURL)
+		if err != nil || (address.Hostname() != page.Hostname() && providerSourceForURL(fullURL) != sourceHuangguoAI) {
 			continue
 		}
-		seen[key] = true
-		seen[fullURL] = true
-		idx := episodeIndex(title, 0)
-		if idx <= 0 {
-			idx = len(episodes) + 1
+		key := aiEpisodeKey(fullURL, sourceID)
+		idx, err := strconv.Atoi(strings.TrimPrefix(key, "ep-"))
+		if err != nil || idx < 1 || idx > 10000 || seen[idx] {
+			continue
 		}
-		idx = nextUnusedEpisodeIndex(idx, usedIndex)
-		usedIndex[idx] = true
-		episodes = append(episodes, providerEpisode{Key: key, Title: title, URL: fullURL, Index: idx})
+		seen[idx] = true
+		episodes = append(episodes, providerEpisode{Key: key, Title: fmt.Sprintf("第%d集", idx), URL: fullURL, Index: idx})
 	}
 	sortProviderEpisodes(episodes)
 	return episodes
@@ -832,8 +829,8 @@ func parseHuangguoVideoEpisodes(rawHTML, pageURL string) []providerEpisode {
 }
 
 func parseAIVideoURL(rawHTML, pageURL string) string {
-	if media := parseAIVideoInitialData(rawHTML, pageURL); media != "" {
-		return media
+	if reAIVideoInitialData.MatchString(rawHTML) {
+		return parseAIVideoInitialData(rawHTML, pageURL)
 	}
 	if m := reDataPlaySrc.FindStringSubmatch(rawHTML); len(m) > 1 {
 		if media := normalizeProviderMediaURL(pageURL, m[1]); media != "" {
@@ -851,8 +848,7 @@ func parseAIVideoURL(rawHTML, pageURL string) string {
 }
 
 func parseAIVideoInitialData(rawHTML, pageURL string) string {
-	re := regexp.MustCompile(`(?is)<script\b[^>]*id=["']videoInitialData["'][^>]*>(.*?)</script>`)
-	m := re.FindStringSubmatch(rawHTML)
+	m := reAIVideoInitialData.FindStringSubmatch(rawHTML)
 	if len(m) < 2 {
 		return ""
 	}
@@ -860,33 +856,23 @@ func parseAIVideoInitialData(rawHTML, pageURL string) string {
 	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &data); err != nil {
 		return ""
 	}
-	if media := normalizeProviderMediaURL(pageURL, mapString(data, "videoSrc", "videoUrl", "playUrl")); media != "" {
-		return media
-	}
-	eps, _ := data["epPlaySrcs"].(map[string]any)
-	if len(eps) == 0 {
+	sourceID, requested, valid := aiVideoPageIdentity(pageURL)
+	if !valid || (mapString(data, "id") != "" && mapString(data, "id") != sourceID) {
 		return ""
 	}
-	preferred := firstNonEmpty(mapString(data, "ep", "episode"))
-	if m := regexp.MustCompile(`/ep-(\d+)(?:/|$)`).FindStringSubmatch(pageURL); len(m) > 1 {
-		preferred = m[1]
+	eps, _ := data["epPlaySrcs"].(map[string]any)
+	if raw, found := eps[strconv.Itoa(requested)]; found {
+		value, _ := raw.(string)
+		return normalizeProviderMediaURL(pageURL, value)
 	}
-	if preferred != "" {
-		if media := normalizeProviderMediaURL(pageURL, fmt.Sprint(eps[preferred])); media != "" {
-			return media
+	if current := mapString(data, "ep", "episode"); current != "" {
+		if number, err := strconv.Atoi(current); err != nil || number != requested {
+			return ""
 		}
+	} else if len(eps) != 0 {
+		return ""
 	}
-	keys := make([]string, 0, len(eps))
-	for key := range eps {
-		keys = append(keys, key)
-	}
-	sort.SliceStable(keys, func(i, j int) bool { return episodeIndex(keys[i], i+1) < episodeIndex(keys[j], j+1) })
-	for _, key := range keys {
-		if media := normalizeProviderMediaURL(pageURL, fmt.Sprint(eps[key])); media != "" {
-			return media
-		}
-	}
-	return ""
+	return normalizeProviderMediaURL(pageURL, mapString(data, "videoSrc", "videoUrl", "playUrl"))
 }
 
 func parseDataHLS(rawHTML, pageURL string) string {
@@ -966,20 +952,36 @@ func nextUnusedEpisodeIndex(preferred int, used map[int]bool) int {
 }
 
 func aiEpisodeKey(href, sourceID string) string {
-	u, err := url.Parse(html.UnescapeString(href))
-	path := href
-	if err == nil {
-		path = u.Path
-	}
-	path = strings.Trim(strings.TrimPrefix(path, "/video/"), "/")
-	parts := strings.Split(path, "/")
-	if len(parts) > 1 && parts[0] == sourceID {
-		return cleanID(parts[len(parts)-1])
-	}
-	if len(parts) == 1 && parts[0] == sourceID {
+	id, number, valid := aiVideoPageIdentity(href)
+	if !valid || id != sourceID {
 		return ""
 	}
-	return cleanID(strings.Join(parts, "-"))
+	if number == 1 {
+		return "1"
+	}
+	return "ep-" + strconv.Itoa(number)
+}
+
+func aiVideoPageIdentity(address string) (string, int, bool) {
+	u, err := url.Parse(html.UnescapeString(address))
+	if err != nil {
+		return "", 0, false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 || len(parts) > 3 || (parts[0] != "video" && parts[0] != "detail") || parts[1] == "" {
+		return "", 0, false
+	}
+	number := 1
+	if len(parts) == 3 {
+		if parts[0] != "video" || !strings.HasPrefix(parts[2], "ep-") {
+			return "", 0, false
+		}
+		number, err = strconv.Atoi(strings.TrimPrefix(parts[2], "ep-"))
+		if err != nil || number < 1 || number > 10000 {
+			return "", 0, false
+		}
+	}
+	return parts[1], number, true
 }
 
 func huangguoVideoSourceID(href string) (path, sourceID string) {

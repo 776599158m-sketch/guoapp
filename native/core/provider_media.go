@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -192,7 +193,16 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			pageURL = actual.(string)
 		}
 		if chapter.Source == sourceHuangguoAI {
+			_, sourceID, valid := splitProviderDramaID(task.DramaID)
+			pageID, number, pageValid := aiVideoPageIdentity(pageURL)
+			requested, episodeErr := strconv.Atoi(chapter.EpisodeString(task.Index))
+			if !valid || !pageValid || pageID != sourceID || episodeErr != nil || number != requested {
+				return providerMedia{}, errors.New("黄果播放页与所选剧集或集数不符，请刷新详情")
+			}
 			media.URL = parseAIVideoURL(body, pageURL)
+			if media.URL == "" {
+				return providerMedia{}, errors.New("黄果未返回所选分集的有效播放地址，请刷新详情或确认站源权限")
+			}
 		} else {
 			media.URL = parseDataHLS(body, pageURL)
 		}

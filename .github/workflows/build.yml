@@ -37,7 +37,7 @@ jobs:
           cache: true
       - run: flutter pub get --enforce-lockfile
       - run: flutter test test/lite_app_test.dart --dart-define=LITE=true --dart-define=ALL_SOURCES=true --dart-define=DISABLE_REMOTE_IMAGES=true
-      - run: go test -race -run '^TestNativeLite' -ldflags='-X duanjuapp/native/core.buildAllSources=true -X duanjuapp/native/core.buildLite=true' ./core
+      - run: go test -race -run '^Test(NativeLite|HuangguoAI)' -ldflags='-X duanjuapp/native/core.buildAllSources=true -X duanjuapp/native/core.buildLite=true' ./core
         working-directory: native
 
   ios:
