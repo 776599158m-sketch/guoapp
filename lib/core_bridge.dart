@@ -635,10 +635,11 @@ class NativeRepository extends AppRepository {
       'action': 'initialize',
       'directory': directory.path,
     });
-    if (build['allSources'] != allSourcesEnabled) {
+    if (build['allSources'] != allSourcesEnabled ||
+        (build['lite'] == true) != liteEnabled) {
       throw AppFailure('应用与原生核心的站源版本不一致，请使用完整安装包重新安装');
     }
-    if (!background) await BackgroundDownloads.prepare();
+    if (!background && !liteEnabled) await BackgroundDownloads.prepare();
     if (!background) {
       SystemProxyMonitor.start((value) async {
         await _call({'action': 'updateSystemProxy', 'systemProxy': value});
@@ -743,7 +744,7 @@ class NativeRepository extends AppRepository {
   }
 
   @override
-  bool get supportsDownloads => access?.canDownload ?? true;
+  bool get supportsDownloads => !liteEnabled && (access?.canDownload ?? true);
 
   @override
   Future<List<DownloadJob>> downloads() async {

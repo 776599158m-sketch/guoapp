@@ -10,17 +10,23 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core_bridge.dart';
 import 'app_layout.dart';
+import 'app_orientation.dart';
 import 'app_theme.dart';
 import 'home_screen.dart';
+import 'app_build.dart';
+import 'lite_settings_screen.dart';
 import 'local_store.dart';
 import 'profiles_screen.dart';
 import 'media_library.dart';
 import 'package_smoke.dart';
 import 'lan_controller.dart';
 import 'player_screen.dart';
+import 'video_enhancement_assets.dart';
+import 'diary_service.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  DiaryService.add('[App] 应用启动，版本: 0.2.65-lite.1+72, 平台: ${Platform.operatingSystem}');
   if (Platform.isAndroid) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(AppTheme.systemBars(Brightness.dark));
@@ -29,15 +35,18 @@ Future<void> main(List<String> arguments) async {
     await windowManager.ensureInitialized();
   }
   MediaKit.ensureInitialized();
+  VideoEnhancementAssets.registerLicenses();
   if (Platform.isWindows && arguments.firstOrNull == '--package-smoke') {
     await runPackageSmoke(arguments);
     return;
   }
-  runApp(const AppBootstrap());
+  final device = await AppDevice.detect();
+  runApp(AppBootstrap(device: device));
 }
 
 class AppBootstrap extends StatefulWidget {
-  const AppBootstrap({super.key});
+  const AppBootstrap({super.key, this.device = const AppDevice()});
+  final AppDevice device;
   @override
   State<AppBootstrap> createState() => _AppBootstrapState();
 }
@@ -48,7 +57,7 @@ class _AppBootstrapState extends State<AppBootstrap>
   final navigator = GlobalKey<NavigatorState>();
   LocalStore? store;
   Object? error;
-  AppDevice device = const AppDevice();
+  late AppDevice device = widget.device;
 
   @override
   void dispose() {
@@ -70,7 +79,10 @@ class _AppBootstrapState extends State<AppBootstrap>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!Platform.isIOS) return;
+    if (state == AppLifecycleState.resumed && Platform.isAndroid) {
+      unawaited(_refreshDevice());
+    }
+    if (!Platform.isIOS || liteEnabled) return;
     final library = MediaLibrary.current;
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
@@ -88,18 +100,29 @@ class _AppBootstrapState extends State<AppBootstrap>
     }
   }
 
+  Future<void> _refreshDevice() async {
+    final detected = await AppDevice.detect(fallback: device);
+    if (!mounted ||
+        (device.television == detected.television &&
+            device.version == detected.version)) {
+      return;
+    }
+    setState(() => device = detected);
+  }
+
   Future<void> _initialize() async {
     setState(() {
       error = null;
     });
     try {
       final preferences = await SharedPreferences.getInstance();
-      device = await AppDevice.detect();
+      await _refreshDevice();
       await repository.initialize();
       if (mounted) {
         setState(() {
           store = LocalStore(preferences);
           repository.access = store;
+          if (!liteEnabled) {
           MediaLibrary.attach(repository, store!);
           LanController.current?.dispose();
           final link = LanController(
@@ -148,6 +171,7 @@ class _AppBootstrapState extends State<AppBootstrap>
               ),
             );
           };
+          }
         });
       }
     } catch (failure) {
@@ -214,24 +238,27 @@ class DuanjuApp extends StatelessWidget {
         value: AppTheme.systemBars(theme.brightness),
         child: ColoredBox(
           color: theme.scaffoldBackgroundColor,
-          child: AppLayout(
+          child: AppOrientationScope(
             television: tv,
-            version: version,
-            child: Theme(
-              data: tv ? televisionTheme(theme) : theme,
-              child: Shortcuts(
-                shortcuts: const {
-                  SingleActivator(
-                    LogicalKeyboardKey.select,
-                    includeRepeats: false,
-                  ): ActivateIntent(),
-                  SingleActivator(
-                    LogicalKeyboardKey.gameButtonA,
-                    includeRepeats: false,
-                  ): ActivateIntent(),
-                  SingleActivator(LogicalKeyboardKey.goBack): DismissIntent(),
-                },
-                child: FocusTraversalGroup(child: child!),
+            child: AppLayout(
+              television: tv,
+              version: version,
+              child: Theme(
+                data: tv ? televisionTheme(theme) : theme,
+                child: Shortcuts(
+                  shortcuts: const {
+                    SingleActivator(
+                      LogicalKeyboardKey.select,
+                      includeRepeats: false,
+                    ): ActivateIntent(),
+                    SingleActivator(
+                      LogicalKeyboardKey.gameButtonA,
+                      includeRepeats: false,
+                    ): ActivateIntent(),
+                    SingleActivator(LogicalKeyboardKey.goBack): DismissIntent(),
+                  },
+                  child: FocusTraversalGroup(child: child!),
+                ),
               ),
             ),
           ),
@@ -240,7 +267,9 @@ class DuanjuApp extends StatelessWidget {
     },
     home: store != null
         ? store!.locked
-              ? ProfilesScreen(store: store!, locked: true)
+              ? liteEnabled
+                  ? LiteSettingsScreen(store: store!, recovery: true)
+                  : ProfilesScreen(store: store!, locked: true)
               : HomeScreen(
                   key: ValueKey(
                     'profile-${store!.profile.id}-${store!.profileEpoch}',

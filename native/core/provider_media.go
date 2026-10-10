@@ -35,6 +35,16 @@ func (d *Downloader) providerBaseURL(source string) string {
 		configured, fallback = d.cfg.HongguoURL, hongguoBaseURL
 	case sourceHuangju:
 		configured, fallback = d.cfg.HuangjuURL, huangjuBaseURL
+	case sourceYeguo:
+		configured, fallback = d.cfg.YeguoURL, yeguoBaseURL
+	case sourceDSD:
+		configured, fallback = d.cfg.DSDURL, dsdBaseURL
+	case sourceSorani:
+		configured, fallback = d.cfg.SoraniURL, soraniSiteBaseURL
+	case sourceGuipian:
+		configured, fallback = d.cfg.GuipianURL, guipianSiteBaseURL
+	case sourceHanxiaoquan:
+		configured, fallback = d.cfg.HanxiaoquanURL, hanxiaoquanSiteBaseURL
 	default:
 		fallback = "https://d2pypzndaqisk.cloudfront.net"
 	}
@@ -58,6 +68,19 @@ func providerSourceForURL(raw string) string {
 		return sourceHongguo
 	case host == "huangju.net" || host == "www.huangju.net" || host == "api.huangju.net":
 		return sourceHuangju
+	case host == "ygdj7.com" || host == "www.ygdj7.com" ||
+		host == "analyze.buxefaex.cc" || strings.HasSuffix(host, ".buxefaex.cc") ||
+		strings.HasSuffix(host, ".fzchosdi.cc") ||
+		host == "delta.ygrwdsgt.cc" || host == "yeguodj.com" || host == "www.yeguodj.com":
+		return sourceYeguo
+	case host == "dsd.com.se" || host == "www.dsd.com.se":
+		return sourceDSD
+	case host == "sorani.net" || host == "www.sorani.net" || host == "api.sorani.cc" || host == "sorani.cc":
+		return sourceSorani
+	case host == "guipianwu.com" || host == "www.guipianwu.com":
+		return sourceGuipian
+	case host == "jennyhow.com" || host == "www.jennyhow.com":
+		return sourceHanxiaoquan
 	default:
 		return ""
 	}
@@ -65,7 +88,7 @@ func providerSourceForURL(raw string) string {
 
 func (d *Downloader) providerURLCandidates(raw string) []string {
 	source := providerSourceForURL(raw)
-	if source == "" || source == sourceHuangju {
+	if source == "" || source == sourceHuangju || source == sourceYeguo {
 		return []string{raw}
 	}
 	parsed, _ := url.Parse(raw)
@@ -103,6 +126,21 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	}
 	if chapter.Source == sourceHuangju {
 		return d.resolveHuangjuMedia(ctx, task)
+	}
+	if chapter.Source == sourceYeguo {
+		return d.resolveYeguoMedia(ctx, task)
+	}
+	if chapter.Source == sourceDSD {
+		return d.resolveDSDMedia(ctx, task)
+	}
+	if chapter.Source == sourceSorani {
+		return d.resolveSoraniMedia(ctx, task)
+	}
+	if chapter.Source == sourceGuipian {
+		return d.resolveGuipianMedia(ctx, task)
+	}
+	if chapter.Source == sourceHanxiaoquan {
+		return d.resolveHanxiaoquanMedia(ctx, task)
 	}
 	if strings.HasPrefix(chapter.VideoURL, "hongguo-cenc://") {
 		return d.resolveHongguoMedia(ctx, task)

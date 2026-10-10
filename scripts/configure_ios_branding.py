@@ -10,6 +10,9 @@ def configure(path, dart_defines):
     data = plistlib.loads(path.read_bytes())
     data['CFBundleDisplayName'] = variant.name
     data['CFBundleName'] = variant.slug
+    if variant.lite:
+        data.pop('NSLocalNetworkUsageDescription', None)
+        data.pop('NSBonjourServices', None)
     path.write_bytes(plistlib.dumps(data, fmt=plistlib.FMT_BINARY, sort_keys=False))
 
 
