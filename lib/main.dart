@@ -123,54 +123,54 @@ class _AppBootstrapState extends State<AppBootstrap>
           store = LocalStore(preferences);
           repository.access = store;
           if (!liteEnabled) {
-          MediaLibrary.attach(repository, store!);
-          LanController.current?.dispose();
-          final link = LanController(
-            repository,
-            store!,
-            kind: device.television
-                ? 'tv'
-                : Platform.isWindows
-                ? 'computer'
-                : 'phone',
-          );
-          LanController.current = link;
-          link.openPlayback = (request) async {
-            final epoch = request.profileEpoch;
-            if (request.cancelled ||
-                !mounted ||
-                store!.locked ||
-                !link.receiving ||
-                store!.profileEpoch != epoch ||
-                !store!.allowsSource(request.detail.drama.source)) {
-              throw StateError('当前用户不能接收播放');
-            }
-            await link.playbackHost?.stop();
-            if (request.cancelled ||
-                !mounted ||
-                store!.locked ||
-                store!.profileEpoch != epoch ||
-                !link.receiving) {
-              throw StateError('播放接收已取消');
-            }
-            final navigation = navigator.currentState;
-            if (navigation == null) throw StateError('接收设备界面尚未就绪');
-            unawaited(
-              navigation.pushAndRemoveUntil<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => PlayerScreen(
-                    detail: request.detail,
-                    initialIndex: request.index,
-                    initialPosition: request.position,
-                    repository: repository,
-                    store: store!,
-                    handoff: request,
-                  ),
-                ),
-                (route) => route.isFirst,
-              ),
+            MediaLibrary.attach(repository, store!);
+            LanController.current?.dispose();
+            final link = LanController(
+              repository,
+              store!,
+              kind: device.television
+                  ? 'tv'
+                  : Platform.isWindows
+                  ? 'computer'
+                  : 'phone',
             );
-          };
+            LanController.current = link;
+            link.openPlayback = (request) async {
+              final epoch = request.profileEpoch;
+              if (request.cancelled ||
+                  !mounted ||
+                  store!.locked ||
+                  !link.receiving ||
+                  store!.profileEpoch != epoch ||
+                  !store!.allowsSource(request.detail.drama.source)) {
+                throw StateError('当前用户不能接收播放');
+              }
+              await link.playbackHost?.stop();
+              if (request.cancelled ||
+                  !mounted ||
+                  store!.locked ||
+                  store!.profileEpoch != epoch ||
+                  !link.receiving) {
+                throw StateError('播放接收已取消');
+              }
+              final navigation = navigator.currentState;
+              if (navigation == null) throw StateError('接收设备界面尚未就绪');
+              unawaited(
+                navigation.pushAndRemoveUntil<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PlayerScreen(
+                      detail: request.detail,
+                      initialIndex: request.index,
+                      initialPosition: request.position,
+                      repository: repository,
+                      store: store!,
+                      handoff: request,
+                    ),
+                  ),
+                  (route) => route.isFirst,
+                ),
+              );
+            };
           }
         });
       }
