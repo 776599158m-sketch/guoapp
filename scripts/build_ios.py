@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import os
 import platform
+import plistlib
 import re
 import shlex
 import shutil
@@ -88,19 +89,28 @@ def main():
     output = root / 'dist' / 'ios'
     output.mkdir(parents=True, exist_ok=True)
     version = re.search(r'^version:\s*(\S+)', (root / 'pubspec.yaml').read_text(), re.MULTILINE).group(1)
+    build_name = version.split('-')[0] if variant.lite else version.split('+')[0]
+    release_arguments = [*variant.flutter_arguments, '--build-name=' + build_name]
     artifacts = []
     if options.export_options:
         config = options.export_options.expanduser().resolve()
         if not config.is_file():
             raise SystemExit('ExportOptions.plist 不存在。')
-        run([flutter, 'build', 'ipa', '--release', '--no-pub', '--export-options-plist', str(config), *variant.flutter_arguments])
+        run([flutter, 'build', 'ipa', '--release', '--no-pub', '--export-options-plist', str(config), *release_arguments])
         for package in (root / 'build' / 'ios' / 'ipa').glob('*.ipa'):
             destination = output / f'{variant.slug}-{version}-ios.ipa'
             shutil.copy2(package, destination)
             artifacts.append(destination)
     else:
-        run([flutter, 'build', 'ios', '--release', '--no-codesign', '--no-pub', *variant.flutter_arguments])
+        run([flutter, 'build', 'ios', '--release', '--no-codesign', '--no-pub', *release_arguments])
         application = root / 'build' / 'ios' / 'iphoneos' / 'Runner.app'
+        metadata = plistlib.loads((application / 'Info.plist').read_bytes())
+        if metadata['CFBundleShortVersionString'] != build_name:
+            raise SystemExit('iOS 版本号与构建参数不一致。')
+        if variant.lite and (metadata['CFBundleIdentifier'] != 'com.duanju.zhenguojian.lite' or
+                             metadata['CFBundleDisplayName'] != variant.name or
+                             'NSBonjourServices' in metadata or 'NSLocalNetworkUsageDescription' in metadata):
+            raise SystemExit('iOS Lite 应用标识或权限配置无效。')
         symbols = subprocess.check_output(['xcrun', 'nm', '-gU', str(application / 'Runner')], text=True)
         for symbol in ['_DuanjuRequest', '_DuanjuFree']:
             if symbol not in symbols:
