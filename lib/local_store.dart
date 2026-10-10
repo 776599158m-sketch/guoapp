@@ -906,6 +906,7 @@ class LocalStore extends ChangeNotifier {
     String? pin,
   }) => _queue(() async {
     _requireAdmin();
+    if (liteEnabled) throw StateError('Lite 版使用单用户记录');
     final old = _profiles.where((profile) => profile.id == id).firstOrNull;
     final targetId = old?.id ?? randomProfileToken();
     final cleanName = name.trim();
@@ -1245,7 +1246,7 @@ class LocalStore extends ChangeNotifier {
     if (_configurationError == null &&
         previousProfiles == _string('profiles') &&
         previousId == _current) {
-      _locked = previousLocked;
+      _locked = liteEnabled ? false : previousLocked;
     } else {
       _epoch++;
     }

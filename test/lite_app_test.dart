@@ -61,6 +61,30 @@ void main() {
     expect(await store.exportBackup(), valid);
   });
 
+  test('Damaged local records can recover from a valid Lite backup', () async {
+    final source = await freshStore();
+    addTearDown(source.dispose);
+    await source.toggleFavorite(FixtureRepository.free);
+    final backup = await source.exportBackup();
+    SharedPreferences.setMockInitialValues({'profiles': 'broken'});
+    final recovered = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(recovered.dispose);
+    expect(recovered.locked, isTrue);
+    expect(recovered.configurationError, isNotNull);
+    await recovered.recoverLiteBackup(backup);
+    expect(recovered.locked, isFalse);
+    expect(recovered.isFavorite(FixtureRepository.free.id), isTrue);
+    final reopened = LocalStore(recovered.preferences);
+    addTearDown(reopened.dispose);
+    expect(reopened.locked, isFalse);
+    expect(reopened.isFavorite(FixtureRepository.free.id), isTrue);
+    await expectLater(reopened.saveProfile(
+      name: 'extra',
+      sources: ['hongguo'],
+      download: true,
+    ), throwsStateError);
+  });
+
   test('Lite source boundary excludes unsupported full-edition providers', () {
     expect(allSourcesEnabled, isTrue);
     expect(SourceSite.isAvailable('hongguo'), isTrue);
