@@ -163,6 +163,54 @@ class _PlayerScreenState extends State<PlayerScreen>
       ? _player.state.position.inMilliseconds / 1000
       : _resumePosition;
 
+  void _logPlayback(String message) {
+    DiaryService.addPlayback(
+      '[Play] source=${widget.detail.drama.source}, '
+      'episode=${widget.detail.episodes[_index].number}, $message',
+      decryptionKey: _plan?.decryptionKey ?? '',
+    );
+  }
+
+  Future<void> _readProxyFailure(PlaybackPlan plan) async {
+    final address = Uri.tryParse(plan.url);
+    if (plan.local ||
+        address == null ||
+        address.scheme != 'http' ||
+        address.host != '127.0.0.1' ||
+        address.pathSegments.length != 2) {
+      return;
+    }
+    final ticket = _generation;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 1)
+      ..findProxy = (_) => 'DIRECT';
+    try {
+      final endpoint = address.replace(
+        pathSegments: [address.pathSegments.first, '_diagnostics'],
+        query: '',
+        fragment: '',
+      );
+      final request = await client
+          .getUrl(endpoint)
+          .timeout(const Duration(seconds: 1));
+      final response = await request.close().timeout(const Duration(seconds: 1));
+      if (response.statusCode != HttpStatus.ok) return;
+      final text = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 1));
+      if (_closed || ticket != _generation || !identical(_plan, plan)) return;
+      final failure = jsonDecode(text) as Map<String, dynamic>;
+      _logPlayback(
+        '代理错误: stage=${failure['stage']}, '
+        'host=${failure['host']}, httpStatus=${failure['httpStatus']}, '
+        'message=${failure['message']}',
+      );
+    } catch (_) {} finally {
+      client.close(force: true);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -231,7 +279,17 @@ class _PlayerScreenState extends State<PlayerScreen>
     });
     _configurePictureInPicture();
     _subscriptions.add(
+      _player.stream.log.listen((log) {
+        if (!_closed && _acceptErrors && log.text.trim().isNotEmpty) {
+          _logPlayback('mpv/${log.prefix}/${log.level}: ${log.text.trim()}');
+        }
+      }),
+    );
+    _subscriptions.add(
       _player.stream.error.listen((error) {
+        if (!_closed && error.trim().isNotEmpty) {
+          _logPlayback('播放器错误: ${error.trim()}');
+        }
         if (_enhancement.handlePlaybackError(error)) return;
         if (!_closed && _acceptErrors && mounted && error.trim().isNotEmpty) {
           _queueRecovery();
@@ -248,6 +306,10 @@ class _PlayerScreenState extends State<PlayerScreen>
           final duration = _player.state.duration;
           if (duration <= Duration.zero ||
               _player.state.position < duration - const Duration(seconds: 2)) {
+            _logPlayback(
+              '播放提前结束: durationMs=${duration.inMilliseconds}, '
+              'positionMs=${_player.state.position.inMilliseconds}',
+            );
             _queueRecovery();
           } else if (_autoAdvance &&
               _foreground &&
@@ -757,6 +819,8 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!_foreground || (_errorTimer?.isActive ?? false)) {
       return;
     }
+    final plan = _plan;
+    if (plan != null) unawaited(_readProxyFailure(plan));
     final ticket = _generation;
     final position = _player.state.position;
     _errorTimer = Timer(const Duration(milliseconds: 900), () {
@@ -792,6 +856,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     final action = current.local
         ? PlaybackRecoveryAction.stop
         : _recovery.next(current);
+    _logPlayback(
+      '自动恢复: action=${action.name}, '
+      'route=${current.routeIndex + 1}/${current.routeCount}, '
+      'durationMs=${_player.state.duration.inMilliseconds}, '
+      'positionMs=${_player.state.position.inMilliseconds}, '
+      'buffering=${_player.state.buffering}',
+    );
     if (action == PlaybackRecoveryAction.stop) {
       _resumePosition = position;
       final ticket = _generation;
@@ -1045,7 +1116,13 @@ class _PlayerScreenState extends State<PlayerScreen>
         _plan = plan;
         installed = true;
         _acceptErrors = true;
-        DiaryService.add('[Play] 调用 _player.open: url=${plan.url}, headers=${plan.headers.keys.toList()}');
+        _logPlayback(
+          '调用 _player.open: url=${plan.url}, '
+          'headers=${plan.headers.keys.toList()}, '
+          'quality=${plan.quality}, '
+          'route=${plan.routeIndex + 1}/${plan.routeCount}, '
+          'cencKey=${plan.decryptionKey.isNotEmpty}',
+        );
         await _player.open(
           Media(
             plan.url,
@@ -1075,7 +1152,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         }
       });
     } catch (error) {
-      DiaryService.add('[Play] 捕获播放流程错误: $error');
+      _logPlayback('捕获播放流程错误: $error');
       if (!_closed && mounted && ticket == _generation) {
         if (prepared != null && identical(_plan, prepared)) {
           _acceptErrors = true;

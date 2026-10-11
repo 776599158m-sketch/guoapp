@@ -21,6 +21,29 @@ class DiaryService {
     debugPrint('[Diary] $message');
   }
 
+  static void addPlayback(String message, {String decryptionKey = ''}) {
+    if (decryptionKey.isNotEmpty) {
+      message = message.replaceAll(
+        RegExp(RegExp.escape(decryptionKey), caseSensitive: false),
+        '[密钥已省略]',
+      );
+    }
+    message = message.replaceAll(
+      RegExp(r'decryption_key[=:]\s*[0-9a-f]+', caseSensitive: false),
+      'decryption_key=[已省略]',
+    );
+    message = message.replaceAllMapped(
+      RegExp(r'https?://\S+', caseSensitive: false),
+      (match) {
+        final address = Uri.tryParse(match.group(0)!);
+        if (address == null || address.host.isEmpty) return '[地址已省略]';
+        final port = address.hasPort ? ':${address.port}' : '';
+        return '${address.scheme}://${address.host}$port/[地址已省略]';
+      },
+    );
+    add(message);
+  }
+
   /// 获取当前所有日记副本
   static List<String> get entries => List<String>.unmodifiable(_entries);
 
