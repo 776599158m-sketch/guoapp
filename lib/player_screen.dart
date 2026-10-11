@@ -126,6 +126,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   String? _error;
   String? _saveWarning;
   PlaybackPlan? _plan;
+  PlaybackPlan? _proxyDiagnosticsPlan;
+  DateTime? _proxyDiagnosticsReadAt;
+  String? _proxyFailureMessage;
   double _speed = 1;
   double _aspectRatio = 9 / 16;
   double _resumePosition = 0;
@@ -180,6 +183,15 @@ class _PlayerScreenState extends State<PlayerScreen>
         address.pathSegments.length != 2) {
       return;
     }
+    final now = DateTime.now();
+    if (identical(_proxyDiagnosticsPlan, plan) &&
+        _proxyDiagnosticsReadAt != null &&
+        now.difference(_proxyDiagnosticsReadAt!) < const Duration(seconds: 1)) {
+      return;
+    }
+    if (!identical(_proxyDiagnosticsPlan, plan)) _proxyFailureMessage = null;
+    _proxyDiagnosticsPlan = plan;
+    _proxyDiagnosticsReadAt = now;
     final ticket = _generation;
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 1)
@@ -200,7 +212,9 @@ class _PlayerScreenState extends State<PlayerScreen>
           .join()
           .timeout(const Duration(seconds: 1));
       if (_closed || ticket != _generation || !identical(_plan, plan)) return;
+      if (text == _proxyFailureMessage) return;
       final failure = jsonDecode(text) as Map<String, dynamic>;
+      _proxyFailureMessage = text;
       _logPlayback(
         '代理错误: stage=${failure['stage']}, '
         'host=${failure['host']}, httpStatus=${failure['httpStatus']}, '
@@ -282,6 +296,10 @@ class _PlayerScreenState extends State<PlayerScreen>
       _player.stream.log.listen((log) {
         if (!_closed && _acceptErrors && log.text.trim().isNotEmpty) {
           _logPlayback('mpv/${log.prefix}/${log.level}: ${log.text.trim()}');
+          final plan = _plan;
+          if (plan != null && (log.level == 'error' || log.level == 'fatal')) {
+            unawaited(_readProxyFailure(plan));
+          }
         }
       }),
     );
@@ -1072,6 +1090,17 @@ class _PlayerScreenState extends State<PlayerScreen>
         }
         final platform = _player.platform;
         if (platform is NativePlayer) {
+          if (Platform.isIOS) {
+            await platform.setProperty('cache-on-disk', 'no');
+            await platform.setProperty(
+              'demuxer-max-bytes',
+              '${32 * 1024 * 1024}',
+            );
+            await platform.setProperty(
+              'demuxer-max-back-bytes',
+              '${8 * 1024 * 1024}',
+            );
+          }
           if (Platform.isAndroid) {
             if (_television) {
               await platform.setProperty('hwdec', 'mediacodec');

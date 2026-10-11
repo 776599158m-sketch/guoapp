@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:duanju_app/diary_service.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/player_screen.dart';
@@ -61,6 +66,37 @@ void main() {
     expect(player.disposed, isTrue);
     expect(tester.takeException(), isNull);
   }
+
+  testWidgets('mpv resource errors record proxy failures without end-of-file', (
+    tester,
+  ) async {
+    DiaryService.clear();
+    addTearDown(DiaryService.clear);
+    final repository = _DiagnosticsRepository();
+    final player = ScriptedPlayer();
+    final client = _DiagnosticsClient();
+    await HttpOverrides.runZoned(() async {
+      await mount(tester, repository, player);
+      for (var i = 0; i < 3; i++) {
+        player.logController.add(
+          const PlayerLog(
+            prefix: 'ffmpeg',
+            level: 'error',
+            text: 'crypto: Unable to open resource',
+          ),
+        );
+      }
+      await settleOperations(tester);
+      expect(client.requests, hasLength(1));
+      expect(client.requests.single.path, '/route-1/_diagnostics');
+      expect(DiaryService.fullText, contains('httpStatus=403'));
+      expect(DiaryService.fullText, contains('host=segments.test'));
+      expect(DiaryService.fullText, isNot(contains('token=secret')));
+      expect(repository.fallbackCalls, 0);
+      expect(player.opened, hasLength(1));
+      await unmount(tester, player);
+    }, createHttpClient: (_) => client);
+  });
 
   testWidgets(
     'duplicate errors switch once while keeping progress, rate and pause state',
@@ -251,4 +287,60 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     }
   });
+}
+
+class _DiagnosticsRepository extends RouteRepository {
+  @override
+  PlaybackPlan plan(bool alternate) {
+    final original = super.plan(alternate);
+    return PlaybackPlan(
+      url: 'http://127.0.0.1:51234/${original.session}/asset.m3u8',
+      session: original.session,
+      routeIndex: original.routeIndex,
+      routeCount: original.routeCount,
+    );
+  }
+}
+
+class _DiagnosticsClient extends Fake implements HttpClient {
+  final requests = <Uri>[];
+
+  @override
+  Duration? connectionTimeout;
+
+  @override
+  String Function(Uri)? findProxy;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    requests.add(url);
+    return _DiagnosticsRequest();
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _DiagnosticsRequest extends Fake implements HttpClientRequest {
+  @override
+  Future<HttpClientResponse> close() async => _DiagnosticsResponse();
+}
+
+class _DiagnosticsResponse extends Fake implements HttpClientResponse {
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  Stream<S> transform<S>(StreamTransformer<List<int>, S> streamTransformer) {
+    return Stream<List<int>>.value(
+      utf8.encode(
+        jsonEncode({
+          'stage': '媒体响应',
+          'host': 'segments.test',
+          'httpStatus': 403,
+          'message': 'HTTP 403 https://segments.test/private/seg.ts?token=secret',
+        }),
+      ),
+    ).transform(streamTransformer);
+  }
 }
