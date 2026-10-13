@@ -36,7 +36,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get --enforce-lockfile
-      - run: flutter test test/lite_app_test.dart test/player_screen_test.dart test/diary_service_test.dart --dart-define=LITE=true --dart-define=ALL_SOURCES=true --dart-define=DISABLE_REMOTE_IMAGES=true
+      - run: flutter test test/lite_app_test.dart test/player_screen_test.dart test/diary_service_test.dart test/playback_launch_test.dart --dart-define=LITE=true --dart-define=ALL_SOURCES=true --dart-define=DISABLE_REMOTE_IMAGES=true
       - run: go test -race -run '^Test(NativeLite|NativeStream|HuangguoAI|LegacyAPIProbe)' -ldflags='-X duanjuapp/native/core.buildAllSources=true -X duanjuapp/native/core.buildLite=true' ./core
         working-directory: native
 

@@ -180,6 +180,9 @@ abstract class AppRepository {
   Future<CatalogPage> cached(String source, {String category = ''});
   Future<String> cover(Drama drama, {bool force = false});
   Future<DramaDetail> detail(Drama drama);
+  Future<DramaDetail> playbackDetail(Drama drama, {required String requestId}) =>
+      detail(drama);
+  Future<void> cancelPlaybackDetail(String requestId) async {}
   Future<PlaybackPlan> resolve(Drama drama, Episode episode, {int quality = 0});
   Future<PlaybackPlan> fallback(PlaybackPlan current);
   Future<void> cancelPlayback();
@@ -610,6 +613,7 @@ class NativeRepository extends AppRepository {
             'suggestions',
             'recommendations',
             'metadata',
+            'detail',
             'danmaku',
             'preload',
             'prepareHandoff',
@@ -714,6 +718,19 @@ class NativeRepository extends AppRepository {
   Future<DramaDetail> detail(Drama drama) async => DramaDetail.fromJson(
     await _call({'action': 'detail', 'drama': drama.toJson()}),
   );
+  @override
+  Future<DramaDetail> playbackDetail(
+    Drama drama, {
+    required String requestId,
+  }) async => DramaDetail.fromJson(
+    await _read('detail-$requestId:', {
+      'action': 'detail',
+      'drama': drama.toJson(),
+    }),
+  );
+  @override
+  Future<void> cancelPlaybackDetail(String requestId) =>
+      _cancelReads('detail-$requestId:');
   @override
   Future<PlaybackPlan> resolve(
     Drama drama,
