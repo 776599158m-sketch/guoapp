@@ -54,6 +54,49 @@ type nativeStreamServer struct {
 	address    string
 	sessions   map[string]*nativeStreamSession
 	server     *http.Server
+	stopped    chan struct{}
+	healthID   string
+}
+
+var nativeStreamHealthClient = &http.Client{
+	Timeout: 2 * time.Second,
+	Transport: &http.Transport{
+		Proxy: nil, DisableKeepAlives: true,
+		DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+	},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func (stream *nativeStreamServer) nativeHealthy(ctx context.Context) bool {
+	select {
+	case <-stream.stopped:
+		return false
+	default:
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, stream.address+"/_health", nil)
+	if err != nil {
+		return false
+	}
+	response, err := nativeStreamHealthClient.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	return response.StatusCode == http.StatusNoContent && response.Header.Get("X-Stream-Instance") == stream.healthID
+}
+
+func (stream *nativeStreamServer) nativeClearSessions() {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	for token, session := range stream.sessions {
+		session.cancel()
+		delete(stream.sessions, token)
+	}
+}
+
+func (stream *nativeStreamServer) nativeClose() {
+	_ = stream.server.Close()
+	stream.nativeClearSessions()
 }
 
 func (stream *nativeStreamServer) nativeRequest(request *http.Request) (*http.Response, error) {
@@ -69,10 +112,19 @@ func newNativeStreamServer(d *Downloader) (*nativeStreamServer, error) {
 	if err != nil {
 		return nil, errors.New("无法初始化本机播放器")
 	}
-	stream := &nativeStreamServer{downloader: d, address: "http://" + listener.Addr().String(), sessions: map[string]*nativeStreamSession{}}
+	healthID := randomHex(16)
+	if healthID == "" {
+		_ = listener.Close()
+		return nil, errors.New("无法初始化本机播放服务")
+	}
+	stream := &nativeStreamServer{downloader: d, address: "http://" + listener.Addr().String(), sessions: map[string]*nativeStreamSession{}, stopped: make(chan struct{}), healthID: healthID}
 	server := &http.Server{Handler: http.HandlerFunc(stream.nativeServe), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
 	stream.server = server
-	go func() { _ = server.Serve(listener) }()
+	go func() {
+		defer close(stream.stopped)
+		_ = server.Serve(listener)
+		stream.nativeClearSessions()
+	}()
 	return stream, nil
 }
 
@@ -225,6 +277,12 @@ func (stream *nativeStreamServer) nativeRewrite(token string, session *nativeStr
 func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if request.URL.Path == "/_health" {
+		writer.Header().Set("Cache-Control", "no-store")
+		writer.Header().Set("X-Stream-Instance", stream.healthID)
+		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
 	parts := strings.Split(strings.Trim(request.URL.Path, "/"), "/")

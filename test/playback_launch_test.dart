@@ -112,7 +112,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('剧集详情加载超时，请稍后重试或检查网络。'), findsOneWidget);
+    expect(find.text('连接等待超时，请检查网络或代理后重试。'), findsOneWidget);
     expect(find.byType(SnackBar), findsNothing);
     expect(DiaryService.fullText, contains('context deadline exceeded'));
     expect(DiaryService.fullText, isNot(contains('token=secret')));

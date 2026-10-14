@@ -196,6 +196,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 1)
       ..findProxy = (_) => 'DIRECT';
+    int? localStatus;
     try {
       final endpoint = address.replace(
         pathSegments: [address.pathSegments.first, '_diagnostics'],
@@ -206,7 +207,19 @@ class _PlayerScreenState extends State<PlayerScreen>
           .getUrl(endpoint)
           .timeout(const Duration(seconds: 1));
       final response = await request.close().timeout(const Duration(seconds: 1));
-      if (response.statusCode != HttpStatus.ok) return;
+      localStatus = response.statusCode;
+      if (_closed || ticket != _generation || !identical(_plan, plan)) return;
+      if (response.statusCode != HttpStatus.ok) {
+        final marker = 'loopback-http-${response.statusCode}';
+        if (_proxyFailureMessage != marker) {
+          _proxyFailureMessage = marker;
+          _logPlayback(
+            '本机连接检查: Dart直连可达, httpStatus=${response.statusCode}, '
+            '原生解析时自检=${plan.localReady}, 服务重建=${plan.localRestarted}',
+          );
+        }
+        return;
+      }
       final text = await response
           .transform(utf8.decoder)
           .join()
@@ -220,7 +233,25 @@ class _PlayerScreenState extends State<PlayerScreen>
         'host=${failure['host']}, httpStatus=${failure['httpStatus']}, '
         'message=${failure['message']}',
       );
-    } catch (_) {} finally {
+    } catch (error) {
+      if (!_closed && ticket == _generation && identical(_plan, plan)) {
+        final kind = error is TimeoutException
+            ? 'timeout'
+            : error.runtimeType.toString();
+        final code = error is SocketException ? error.osError?.errorCode : null;
+        final marker = 'loopback-failed-$localStatus-$kind-$code';
+        if (_proxyFailureMessage != marker) {
+          _proxyFailureMessage = marker;
+          final reachability = localStatus == null
+              ? 'Dart直连失败'
+              : 'Dart直连可达, httpStatus=$localStatus, 诊断读取失败';
+          _logPlayback(
+            '本机连接检查: $reachability, type=$kind, osCode=$code, '
+            '原生解析时自检=${plan.localReady}, 服务重建=${plan.localRestarted}',
+          );
+        }
+      }
+    } finally {
       client.close(force: true);
     }
   }
@@ -1150,6 +1181,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           'headers=${plan.headers.keys.toList()}, '
           'quality=${plan.quality}, '
           'route=${plan.routeIndex + 1}/${plan.routeCount}, '
+          'localReady=${plan.localReady}, localRestarted=${plan.localRestarted}, '
           'cencKey=${plan.decryptionKey.isNotEmpty}',
         );
         await _player.open(

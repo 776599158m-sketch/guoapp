@@ -133,6 +133,8 @@ type nativeCatalogResult struct {
 }
 
 type nativePlan struct {
+	LocalReady      bool              `json:"localReady,omitempty"`
+	LocalRestarted  bool              `json:"localRestarted,omitempty"`
 	ExpiresAt       int64             `json:"expiresAt,omitempty"`
 	PrefetchedBytes int64             `json:"prefetchedBytes,omitempty"`
 	DanmakuID       string            `json:"danmakuId,omitempty"`
@@ -340,7 +342,32 @@ func NativeRequest(raw string) (result string) {
 	return string(body)
 }
 
+func nativeRequestTimeout(input nativeInput) time.Duration {
+	switch input.Action {
+	case "moveDownloads":
+		return 10 * time.Minute
+	case "danmaku":
+		return 10 * time.Second
+	case "preload":
+		return 15 * time.Second
+	case "rankings":
+		if board, found := findRankingBoard(input.Board); found && board.Source == sourceHuangguoAI {
+			return 15 * time.Second
+		}
+	case "detail", "resolve":
+		source := sourceFromDramaID(input.Drama.ID)
+		if (source == sourceHuangguoAI || source == sourceHuangguoVideo || source == sourceCloudFront) && (input.Action == "resolve" || input.Session != "") {
+			return 30 * time.Second
+		}
+	}
+	return 60 * time.Second
+}
+
 func nativeDispatch(input nativeInput) (any, error) {
+	return nativeDispatchWithTimeout(input, nativeRequestTimeout(input))
+}
+
+func nativeDispatchWithTimeout(input nativeInput, duration time.Duration) (any, error) {
 	if err := nativeAuthorizeInput(input); err != nil {
 		return nil, err
 	}
@@ -362,17 +389,9 @@ func nativeDispatch(input nativeInput) (any, error) {
 	if engine == nil {
 		return nil, errors.New("应用核心尚未就绪，请重新打开应用")
 	}
-	duration := 60 * time.Second
-	if input.Action == "moveDownloads" {
-		duration = 10 * time.Minute
-	} else if input.Action == "danmaku" {
-		duration = 10 * time.Second
-	} else if input.Action == "preload" {
-		duration = 15 * time.Second
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-	if input.Action == "danmaku" || input.Action == "preload" || input.Action == "prepareHandoff" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata" || input.Action == "detail") {
+	if input.Action == "danmaku" || input.Action == "preload" || input.Action == "prepareHandoff" || input.Session != "" && (input.Action == "catalog" || input.Action == "categories" || input.Action == "suggestions" || input.Action == "recommendations" || input.Action == "metadata" || input.Action == "detail" || input.Action == "rankings") {
 		work, finish, err := engine.beginRead(ctx, input)
 		if err != nil {
 			return nil, err

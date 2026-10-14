@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:duanju_app/app_build.dart';
 import 'package:duanju_app/core_bridge.dart';
+import 'package:duanju_app/diary_service.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/main.dart';
 import 'package:duanju_app/models.dart';
+import 'package:duanju_app/ranking_models.dart';
+import 'package:duanju_app/rankings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +20,69 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     return LocalStore(await SharedPreferences.getInstance());
   }
+
+  testWidgets('leaving rankings cancels its request and ignores a late error', (
+    tester,
+  ) async {
+    final repository = _DeferredRankingRepository();
+    SharedPreferences.setMockInitialValues({'sourceGateOff': true});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+    await tester.pumpWidget(MaterialApp(home: RankingsScreen(
+      repository: repository,
+      store: store,
+      initialGroup: 'huangguo',
+    )));
+    await tester.pump();
+    expect(repository.pending, hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(repository.canceled, repository.requestIds);
+    repository.pending.single.completeError(AppFailure('context canceled'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ranking network errors hide addresses and retry in the same scope', (
+    tester,
+  ) async {
+    DiaryService.clear();
+    addTearDown(DiaryService.clear);
+    final repository = _DeferredRankingRepository();
+    SharedPreferences.setMockInitialValues({'sourceGateOff': true});
+    final store = LocalStore(await SharedPreferences.getInstance());
+    addTearDown(store.dispose);
+    await tester.pumpWidget(MaterialApp(home: RankingsScreen(
+      repository: repository,
+      store: store,
+      initialGroup: 'huangguo',
+    )));
+    await tester.pump();
+    repository.pending.single.completeError(AppFailure(
+      'Get https://ranking.test/private?token=secret: '
+      'read tcp 192.168.1.2:50000: connection reset by peer',
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('连接站源失败，请检查网络或代理后重试。'), findsOneWidget);
+    expect(find.textContaining('192.168.1.2'), findsNothing);
+    expect(find.textContaining('ranking.test'), findsNothing);
+    expect(DiaryService.fullText, contains('connection reset by peer'));
+    expect(DiaryService.fullText, isNot(contains('token=secret')));
+    await tester.tap(find.text('重试'));
+    await tester.pump();
+    expect(repository.pending, hasLength(2));
+    expect(repository.requestIds[0], repository.requestIds[1]);
+    repository.pending.last.complete(const RankingPage(items: []));
+    await tester.pumpAndSettle();
+    expect(find.text('连接站源失败，请检查网络或代理后重试。'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
+  test('interactive errors preserve business messages and summarize network errors', () {
+    expect(interactiveFailureMessage(AppFailure('没有可播放的集数'), fallback: '加载失败'), '没有可播放的集数');
+    expect(interactiveFailureMessage(TimeoutException('private'), fallback: '加载失败'), '连接等待超时，请检查网络或代理后重试。');
+    expect(interactiveFailureMessage(AppFailure('Get https://test/private: EOF'), fallback: '加载失败'), '加载失败');
+  });
 
   test('Lite backup restores favorites, watch position and theme atomically', () async {
     expect(liteEnabled, isTrue);
@@ -124,5 +191,33 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });
+  }
+}
+
+class _DeferredRankingRepository extends FixtureRepository {
+  final pending = <Completer<RankingPage>>[];
+  final requestIds = <String>[];
+  final canceled = <String>[];
+
+  @override
+  Future<List<RankingBoard>> rankingBoards() async => const [
+    RankingBoard(id: 'huangguo-hot', source: 'huangguoai', name: '热播榜'),
+  ];
+
+  @override
+  Future<RankingPage> rankingRead(String board, {
+    required String requestId,
+    int page = 1,
+    bool force = false,
+  }) {
+    requestIds.add(requestId);
+    final result = Completer<RankingPage>();
+    pending.add(result);
+    return result.future;
+  }
+
+  @override
+  Future<void> cancelRankingRead(String requestId) async {
+    canceled.add(requestId);
   }
 }

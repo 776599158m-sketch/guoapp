@@ -297,6 +297,8 @@ class PlaybackPlan {
     this.routeIndex = 0,
     this.routeCount = 1,
     this.local = false,
+    this.localReady = false,
+    this.localRestarted = false,
   });
   final String url;
   final Map<String, String> headers;
@@ -310,10 +312,14 @@ class PlaybackPlan {
   final int routeIndex;
   final int routeCount;
   final bool local;
+  final bool localReady;
+  final bool localRestarted;
   bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
   factory PlaybackPlan.fromJson(Map<String, dynamic> json) => PlaybackPlan(
     url: json['url'] as String? ?? '',
     local: json['local'] == true,
+    localReady: json['localReady'] == true,
+    localRestarted: json['localRestarted'] == true,
     headers: (json['headers'] as Map? ?? {}).map(
       (key, value) => MapEntry(key.toString(), value.toString()),
     ),

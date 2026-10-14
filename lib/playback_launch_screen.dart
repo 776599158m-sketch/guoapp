@@ -155,13 +155,11 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
       DiaryService.addPlayback(
         '[Open] source=${widget.drama.source}, stage=detail, error=$error',
       );
-      final message = error.toString();
       setState(() {
-        _error = message.contains('context deadline exceeded') ||
-                message.contains('TimeoutException') ||
-                message.contains('站源响应超时')
-            ? '剧集详情加载超时，请稍后重试或检查网络。'
-            : message;
+        _error = interactiveFailureMessage(
+          error,
+          fallback: '剧集详情暂时无法加载，请稍后重试。',
+        );
       });
       widget.repository.catalogUpdates.publish(
         widget.repository.catalogUpdates.current(widget.drama),

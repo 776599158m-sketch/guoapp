@@ -98,6 +98,82 @@ void main() {
     }, createHttpClient: (_) => client);
   });
 
+  for (final reachable in [true, false]) {
+    testWidgets('loopback diagnosis distinguishes reachability $reachable', (
+      tester,
+    ) async {
+      DiaryService.clear();
+      addTearDown(DiaryService.clear);
+      final repository = _DiagnosticsRepository();
+      final player = ScriptedPlayer();
+      final client = _DiagnosticsClient(
+        status: HttpStatus.noContent,
+        failure: reachable
+            ? null
+            : const SocketException(
+                'private diagnostic token=secret',
+                osError: OSError('Connection refused', 61),
+              ),
+      );
+      await HttpOverrides.runZoned(() async {
+        await mount(tester, repository, player);
+        for (var i = 0; i < 3; i++) {
+          player.logController.add(
+            const PlayerLog(
+              prefix: 'ffmpeg',
+              level: 'error',
+              text: 'Connection to tcp://127.0.0.1:51234 failed: Connection refused',
+            ),
+          );
+        }
+        await settleOperations(tester);
+        expect(client.requests, hasLength(1));
+        expect(client.findProxy!(client.requests.single), 'DIRECT');
+        expect(DiaryService.fullText, contains('localReady=true'));
+        expect(DiaryService.fullText, contains('localRestarted=true'));
+        expect(DiaryService.fullText, contains('原生解析时自检=true, 服务重建=true'));
+        expect(DiaryService.fullText, contains(
+          reachable ? 'Dart直连可达, httpStatus=204' : 'Dart直连失败, type=SocketException, osCode=61',
+        ));
+        expect(DiaryService.fullText, isNot(contains('token=secret')));
+        expect(repository.fallbackCalls, 0);
+        await unmount(tester, player);
+      }, createHttpClient: (_) => client);
+    });
+  }
+
+  test('playback plans retain local health state from the native core', () {
+    final plan = PlaybackPlan.fromJson({
+      'url': 'http://127.0.0.1:51234/session/asset.m3u8',
+      'localReady': true,
+      'localRestarted': true,
+    });
+    expect(plan.localReady, isTrue);
+    expect(plan.localRestarted, isTrue);
+    final legacy = PlaybackPlan.fromJson({'url': 'https://media.test/a.mp4'});
+    expect(legacy.localReady, isFalse);
+    expect(legacy.localRestarted, isFalse);
+  });
+
+  testWidgets('invalid diagnostic data still confirms loopback is reachable', (
+    tester,
+  ) async {
+    DiaryService.clear();
+    addTearDown(DiaryService.clear);
+    final player = ScriptedPlayer();
+    final client = _DiagnosticsClient(malformed: true);
+    await HttpOverrides.runZoned(() async {
+      await mount(tester, _DiagnosticsRepository(), player);
+      player.logController.add(const PlayerLog(
+        prefix: 'stream', level: 'error', text: 'Failed to open local media',
+      ));
+      await settleOperations(tester);
+      expect(DiaryService.fullText, contains('Dart直连可达, httpStatus=200, 诊断读取失败'));
+      expect(DiaryService.fullText, isNot(contains('Dart直连失败')));
+      await unmount(tester, player);
+    }, createHttpClient: (_) => client);
+  });
+
   testWidgets(
     'duplicate errors switch once while keeping progress, rate and pause state',
     (tester) async {
@@ -298,11 +374,17 @@ class _DiagnosticsRepository extends RouteRepository {
       session: original.session,
       routeIndex: original.routeIndex,
       routeCount: original.routeCount,
+      localReady: true,
+      localRestarted: true,
     );
   }
 }
 
 class _DiagnosticsClient extends Fake implements HttpClient {
+  _DiagnosticsClient({this.status = HttpStatus.ok, this.failure, this.malformed = false});
+  final int status;
+  final SocketException? failure;
+  final bool malformed;
   final requests = <Uri>[];
 
   @override
@@ -314,7 +396,8 @@ class _DiagnosticsClient extends Fake implements HttpClient {
   @override
   Future<HttpClientRequest> getUrl(Uri url) async {
     requests.add(url);
-    return _DiagnosticsRequest();
+    if (failure != null) throw failure!;
+    return _DiagnosticsRequest(status, malformed);
   }
 
   @override
@@ -322,19 +405,25 @@ class _DiagnosticsClient extends Fake implements HttpClient {
 }
 
 class _DiagnosticsRequest extends Fake implements HttpClientRequest {
+  _DiagnosticsRequest(this.status, this.malformed);
+  final int status;
+  final bool malformed;
   @override
-  Future<HttpClientResponse> close() async => _DiagnosticsResponse();
+  Future<HttpClientResponse> close() async => _DiagnosticsResponse(status, malformed);
 }
 
 class _DiagnosticsResponse extends Fake implements HttpClientResponse {
+  _DiagnosticsResponse(this.status, this.malformed);
+  final int status;
+  final bool malformed;
   @override
-  int get statusCode => HttpStatus.ok;
+  int get statusCode => status;
 
   @override
   Stream<S> transform<S>(StreamTransformer<List<int>, S> streamTransformer) {
     return Stream<List<int>>.value(
       utf8.encode(
-        jsonEncode({
+        malformed ? '{broken' : jsonEncode({
           'stage': '媒体响应',
           'host': 'segments.test',
           'httpStatus': 403,

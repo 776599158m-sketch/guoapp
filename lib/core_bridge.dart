@@ -66,6 +66,31 @@ class AppFailure implements Exception {
   String toString() => message;
 }
 
+String interactiveFailureMessage(Object error, {required String fallback}) {
+  final message = error.toString();
+  final lower = message.toLowerCase();
+  if (lower.contains('context deadline exceeded') ||
+      lower.contains('timeoutexception') ||
+      lower.contains('timed out') ||
+      message.contains('站源响应超时')) {
+    return '连接等待超时，请检查网络或代理后重试。';
+  }
+  if (lower.contains('connection reset') ||
+      lower.contains('connection refused') ||
+      lower.contains('no route to host') ||
+      lower.contains('network is unreachable') ||
+      lower.contains('no such host') ||
+      lower.contains('socketexception')) {
+    return '连接站源失败，请检查网络或代理后重试。';
+  }
+  if (lower.contains('http://') ||
+      lower.contains('https://') ||
+      lower.contains('read tcp')) {
+    return fallback;
+  }
+  return message;
+}
+
 abstract class AppRepository {
   Future<Map<String, dynamic>> lan(
     String command,
@@ -110,6 +135,13 @@ abstract class AppRepository {
     int page = 1,
     bool force = false,
   }) async => throw AppFailure('当前环境不支持榜单');
+  Future<RankingPage> rankingRead(
+    String board, {
+    required String requestId,
+    int page = 1,
+    bool force = false,
+  }) => rankings(board, page: page, force: force);
+  Future<void> cancelRankingRead(String requestId) async {}
   Future<List<CatalogCategory>> categories(
     String source, {
     bool force = false,
@@ -400,6 +432,25 @@ class NativeRepository extends AppRepository {
       'force': force,
     }),
   );
+
+  @override
+  Future<RankingPage> rankingRead(
+    String board, {
+    required String requestId,
+    int page = 1,
+    bool force = false,
+  }) async => RankingPage.fromJson(
+    await _read('rankings-$requestId:', {
+      'action': 'rankings',
+      'board': board,
+      'page': page,
+      'force': force,
+    }),
+  );
+
+  @override
+  Future<void> cancelRankingRead(String requestId) =>
+      _cancelReads('rankings-$requestId:');
 
   @override
   Future<SourceStatus> sourceStatus(String source) async =>
