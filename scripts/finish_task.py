@@ -40,10 +40,40 @@ def create_source_archive(destination, names):
     return archive
 
 
+def sync_app_version(source):
+    pubspec = source / 'pubspec.yaml'
+    layout = source / 'lib' / 'app_layout.dart'
+    if not pubspec.is_file() or not layout.is_file():
+        return None
+    version = ''
+    for line in pubspec.read_text(encoding='utf8').splitlines():
+        if line.startswith('version:'):
+            version = line.split(':', 1)[1].strip()
+            break
+    if not version:
+        raise ValueError('pubspec.yaml 缺少 version 字段')
+    raw = layout.read_bytes()
+    text = raw.decode('utf8')
+    marker = "const appVersion = '"
+    start = text.find(marker)
+    if start < 0:
+        raise ValueError('lib/app_layout.dart 未找到 appVersion 常量')
+    begin = start + len(marker)
+    end = text.find("'", begin)
+    if end < 0:
+        raise ValueError('lib/app_layout.dart 的 appVersion 常量格式异常')
+    if text[begin:end] == version:
+        return version
+    updated = text[:begin] + version + text[end:]
+    layout.write_bytes(updated.encode('utf8'))
+    return version
+
+
 def finish_task(source, destination, message):
     if destination.is_symlink():
         raise ValueError('同步目标不能是符号链接')
     source, destination = source.resolve(), destination.resolve()
+    sync_app_version(source)
     selected = source_files(source)
     if not message.strip():
         raise ValueError('请填写本次完成的变更说明')

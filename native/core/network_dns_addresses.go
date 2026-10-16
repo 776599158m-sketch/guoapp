@@ -29,7 +29,8 @@ func protectedCDNHost(host string) bool {
 
 func sourceEntryDNSHost(host string) bool {
 	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
-	case "dsd901.com", "www.dsd901.com", "dsd901.lol", "www.dsd901.lol", "ygdj15.com", "www.ygdj15.com":
+	case "dsd901.com", "www.dsd901.com", "dsd901.lol", "www.dsd901.lol", "ygdj15.com", "www.ygdj15.com",
+		"huangguo.video", "www.huangguo.video":
 		return true
 	default:
 		return false

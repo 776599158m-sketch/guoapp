@@ -34,7 +34,7 @@ func newDNSResolver(transport *http.Transport) *dnsResolver {
 	return &dnsResolver{
 		client: &http.Client{Transport: lookupTransport, Timeout: 4 * time.Second},
 		cache:  map[string]dnsCacheEntry{}, inFlight: map[string]chan struct{}{},
-		endpoints: []string{"https://dns.alidns.com/resolve", "https://dns.google/resolve"},
+		endpoints: []string{"https://dns.alidns.com/resolve", "https://cloudflare-dns.com/dns-query", "https://dns.google/resolve"},
 	}
 }
 
