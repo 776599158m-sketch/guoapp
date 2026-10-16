@@ -359,7 +359,7 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 	if referer == "" {
 		referer = rawURL
 	}
-	candidates := d.providerURLCandidates(rawURL)
+	candidates := d.orderProviderCandidates(d.providerURLCandidates(rawURL), providerSourceForURL(rawURL))
 	var lastErr error
 	tried := 0
 	for _, candidate := range candidates {
@@ -479,6 +479,41 @@ func providerURLCandidates(rawURL string) []string {
 		return []string{rawURL}
 	}
 	return out
+}
+
+func providerURLCandidateOrigin(candidate string) string {
+	u, err := url.Parse(candidate)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func (d *Downloader) orderProviderCandidates(candidates []string, source string) []string {
+	if source == "" || len(candidates) < 2 {
+		return candidates
+	}
+	d.providerMu.Lock()
+	preferred := d.providerHosts[source]
+	d.providerMu.Unlock()
+	if preferred == "" {
+		return candidates
+	}
+	index := -1
+	for i, candidate := range candidates {
+		if providerURLCandidateOrigin(candidate) == preferred {
+			index = i
+			break
+		}
+	}
+	if index <= 0 {
+		return candidates
+	}
+	ordered := make([]string, 0, len(candidates))
+	ordered = append(ordered, candidates[index])
+	ordered = append(ordered, candidates[:index]...)
+	ordered = append(ordered, candidates[index+1:]...)
+	return ordered
 }
 
 func rehostProviderURL(u *url.URL, mirror string) string {
