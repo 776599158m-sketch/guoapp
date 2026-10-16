@@ -1,8 +1,11 @@
 package core
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,6 +30,7 @@ type huangguoBrowserTransport struct {
 	host      string
 	insecure  bool
 	record    func(diagnosticEvent)
+	resolver  *dnsResolver
 	mu        sync.Mutex
 	clients   map[string]browserHTTPClient
 	newClient func(string) (browserHTTPClient, error)
@@ -34,13 +38,46 @@ type huangguoBrowserTransport struct {
 
 func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader) *huangguoBrowserTransport {
 	configured, _ := url.Parse(downloader.providerBaseURL(sourceHuangguoVideo))
+	var resolver *dnsResolver
+	if cdn, ok := base.(*cdnTransport); ok {
+		resolver = cdn.resolver
+	}
 	transport := &huangguoBrowserTransport{
 		base: base, router: downloader.proxyRouter, host: configured.Host,
 		insecure: downloader.cfg.InsecureTLS, record: downloader.recordDiagnostic,
-		clients: make(map[string]browserHTTPClient),
+		resolver: resolver, clients: make(map[string]browserHTTPClient),
 	}
 	transport.newClient = transport.createClient
 	return transport
+}
+
+// entryDialContext mirrors the cdnTransport entry-DNS recovery for hosts whose
+// system resolution is unreliable. tls-client rejects a custom dial context
+// together with a proxy, so this is only installed on the direct path.
+func (transport *huangguoBrowserTransport) entryDialContext() func(context.Context, string, string) (net.Conn, error) {
+	direct := &net.Dialer{Timeout: 15 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil || net.ParseIP(host) != nil || !sourceEntryDNSHost(host) {
+			return direct.DialContext(ctx, network, addr)
+		}
+		addresses, lookupErr := transport.resolver.lookup(ctx, host)
+		if lookupErr != nil || len(addresses) == 0 {
+			return direct.DialContext(ctx, network, addr)
+		}
+		var lastErr error
+		for _, address := range addresses {
+			conn, dialErr := direct.DialContext(ctx, network, net.JoinHostPort(address, port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		if lastErr == nil {
+			lastErr = errors.New("入口域名没有可用地址")
+		}
+		return nil, lastErr
+	}
 }
 
 func (transport *huangguoBrowserTransport) matches(request *http.Request) bool {
@@ -66,6 +103,9 @@ func (transport *huangguoBrowserTransport) createClient(proxy string) (browserHT
 	}
 	if transport.insecure {
 		options = append(options, tlsclient.WithInsecureSkipVerify())
+	}
+	if proxy == "" && transport.resolver != nil {
+		options = append(options, tlsclient.WithDialContext(transport.entryDialContext()))
 	}
 	return tlsclient.NewHttpClient(tlsclient.NewNoopLogger(), options...)
 }
