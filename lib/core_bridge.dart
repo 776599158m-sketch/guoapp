@@ -66,6 +66,31 @@ class AppFailure implements Exception {
   String toString() => message;
 }
 
+String interactiveFailureMessage(Object error, {required String fallback}) {
+  final message = error.toString();
+  final lower = message.toLowerCase();
+  if (lower.contains('context deadline exceeded') ||
+      lower.contains('timeoutexception') ||
+      lower.contains('timed out') ||
+      message.contains('站源响应超时')) {
+    return '连接等待超时，请检查网络或代理后重试。';
+  }
+  if (lower.contains('connection reset') ||
+      lower.contains('connection refused') ||
+      lower.contains('no route to host') ||
+      lower.contains('network is unreachable') ||
+      lower.contains('no such host') ||
+      lower.contains('socketexception')) {
+    return '连接站源失败，请检查网络或代理后重试。';
+  }
+  if (lower.contains('http://') ||
+      lower.contains('https://') ||
+      lower.contains('read tcp')) {
+    return fallback;
+  }
+  return message;
+}
+
 abstract class AppRepository {
   Future<Map<String, dynamic>> lan(
     String command,
@@ -110,6 +135,13 @@ abstract class AppRepository {
     int page = 1,
     bool force = false,
   }) async => throw AppFailure('当前环境不支持榜单');
+  Future<RankingPage> rankingRead(
+    String board, {
+    required String requestId,
+    int page = 1,
+    bool force = false,
+  }) => rankings(board, page: page, force: force);
+  Future<void> cancelRankingRead(String requestId) async {}
   Future<List<CatalogCategory>> categories(
     String source, {
     bool force = false,
@@ -180,6 +212,9 @@ abstract class AppRepository {
   Future<CatalogPage> cached(String source, {String category = ''});
   Future<String> cover(Drama drama, {bool force = false});
   Future<DramaDetail> detail(Drama drama);
+  Future<DramaDetail> playbackDetail(Drama drama, {required String requestId}) =>
+      detail(drama);
+  Future<void> cancelPlaybackDetail(String requestId) async {}
   Future<PlaybackPlan> resolve(Drama drama, Episode episode, {int quality = 0});
   Future<PlaybackPlan> fallback(PlaybackPlan current);
   Future<void> cancelPlayback();
@@ -399,6 +434,25 @@ class NativeRepository extends AppRepository {
   );
 
   @override
+  Future<RankingPage> rankingRead(
+    String board, {
+    required String requestId,
+    int page = 1,
+    bool force = false,
+  }) async => RankingPage.fromJson(
+    await _read('rankings-$requestId:', {
+      'action': 'rankings',
+      'board': board,
+      'page': page,
+      'force': force,
+    }),
+  );
+
+  @override
+  Future<void> cancelRankingRead(String requestId) =>
+      _cancelReads('rankings-$requestId:');
+
+  @override
   Future<SourceStatus> sourceStatus(String source) async =>
       SourceStatus.fromJson(
         await _call({'action': 'sourceStatus', 'source': source}),
@@ -610,6 +664,7 @@ class NativeRepository extends AppRepository {
             'suggestions',
             'recommendations',
             'metadata',
+            'detail',
             'danmaku',
             'preload',
             'prepareHandoff',
@@ -635,10 +690,11 @@ class NativeRepository extends AppRepository {
       'action': 'initialize',
       'directory': directory.path,
     });
-    if (build['allSources'] != allSourcesEnabled) {
+    if (build['allSources'] != allSourcesEnabled ||
+        (build['lite'] == true) != liteEnabled) {
       throw AppFailure('应用与原生核心的站源版本不一致，请使用完整安装包重新安装');
     }
-    if (!background) await BackgroundDownloads.prepare();
+    if (!background && !liteEnabled) await BackgroundDownloads.prepare();
     if (!background) {
       SystemProxyMonitor.start((value) async {
         await _call({'action': 'updateSystemProxy', 'systemProxy': value});
@@ -714,6 +770,19 @@ class NativeRepository extends AppRepository {
     await _call({'action': 'detail', 'drama': drama.toJson()}),
   );
   @override
+  Future<DramaDetail> playbackDetail(
+    Drama drama, {
+    required String requestId,
+  }) async => DramaDetail.fromJson(
+    await _read('detail-$requestId:', {
+      'action': 'detail',
+      'drama': drama.toJson(),
+    }),
+  );
+  @override
+  Future<void> cancelPlaybackDetail(String requestId) =>
+      _cancelReads('detail-$requestId:');
+  @override
   Future<PlaybackPlan> resolve(
     Drama drama,
     Episode episode, {
@@ -743,7 +812,7 @@ class NativeRepository extends AppRepository {
   }
 
   @override
-  bool get supportsDownloads => access?.canDownload ?? true;
+  bool get supportsDownloads => !liteEnabled && (access?.canDownload ?? true);
 
   @override
   Future<List<DownloadJob>> downloads() async {

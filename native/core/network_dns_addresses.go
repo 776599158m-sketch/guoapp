@@ -27,6 +27,16 @@ func protectedCDNHost(host string) bool {
 	return false
 }
 
+func sourceEntryDNSHost(host string) bool {
+	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
+	case "dsd901.com", "www.dsd901.com", "dsd901.lol", "www.dsd901.lol", "ygdj15.com", "www.ygdj15.com",
+		"huangguo.video", "www.huangguo.video":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateCDNAddresses(addresses []string) error {
 	if len(addresses) == 0 {
 		return errors.New("CDN 没有可用的公网地址")

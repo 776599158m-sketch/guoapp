@@ -86,14 +86,32 @@ func (engine *nativeEngine) nativeOpenPlayback(ctx context.Context, choice nativ
 	choice.streamSession = ""
 	{
 		engine.mu.Lock()
+		if engine.stream != nil && !engine.stream.nativeHealthy(ctx) {
+			if err := ctx.Err(); err != nil {
+				engine.mu.Unlock()
+				return nativePlan{}, err
+			}
+			engine.stream.nativeClose()
+			engine.stream = nil
+			plan.LocalRestarted = true
+		}
 		if engine.stream == nil {
 			engine.stream, err = newNativeStreamServer(engine.downloader)
+			if err == nil && !engine.stream.nativeHealthy(ctx) {
+				engine.stream.nativeClose()
+				engine.stream = nil
+				err = errors.New("本机播放服务无法连通，请重新打开应用并检查手机网络或代理规则")
+				if ctx.Err() != nil {
+					err = ctx.Err()
+				}
+			}
 		}
 		stream := engine.stream
 		engine.mu.Unlock()
 		if err != nil {
 			return nativePlan{}, err
 		}
+		plan.LocalReady = true
 		plan.URL, choice.streamSession = stream.nativeOpen(media)
 	}
 	choice.created = time.Now()

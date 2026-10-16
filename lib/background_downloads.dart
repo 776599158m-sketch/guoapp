@@ -18,7 +18,7 @@ void downloadServiceEntry() {
 
 class BackgroundDownloads {
   static Future<void> prepare() async {
-    if (!Platform.isAndroid) return;
+    if (liteEnabled || !Platform.isAndroid) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'zhenguojian_downloads',
@@ -43,7 +43,7 @@ class BackgroundDownloads {
   }
 
   static Future<void> ensureStarted() async {
-    if (!Platform.isAndroid) return;
+    if (liteEnabled || !Platform.isAndroid) return;
     await prepare();
     if (await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.requestNotificationPermission();

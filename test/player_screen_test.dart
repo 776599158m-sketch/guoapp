@@ -1,6 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:duanju_app/diary_service.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
 import 'package:duanju_app/player_screen.dart';
+import 'package:duanju_app/app_layout.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
@@ -19,9 +26,18 @@ void main() {
   Future<void> mount(
     WidgetTester tester,
     RouteRepository repository,
-    ScriptedPlayer platform,
-  ) async {
+    ScriptedPlayer platform, {
+    Size? size,
+    FakeViewPadding? padding,
+  }) async {
     SharedPreferences.setMockInitialValues({});
+    if (size != null) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+    }
+    if (padding != null) {
+      tester.view.padding = padding;
+    }
     final store = LocalStore(await SharedPreferences.getInstance());
     final detail = await repository.detail(FixtureRepository.free);
     await tester.pumpWidget(
@@ -43,10 +59,120 @@ void main() {
 
   Future<void> unmount(WidgetTester tester, ScriptedPlayer player) async {
     await tester.pumpWidget(const SizedBox.shrink());
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+    tester.view.resetPadding();
     await settleOperations(tester);
     expect(player.disposed, isTrue);
     expect(tester.takeException(), isNull);
   }
+
+  testWidgets('mpv resource errors record proxy failures without end-of-file', (
+    tester,
+  ) async {
+    DiaryService.clear();
+    addTearDown(DiaryService.clear);
+    final repository = _DiagnosticsRepository();
+    final player = ScriptedPlayer();
+    final client = _DiagnosticsClient();
+    await HttpOverrides.runZoned(() async {
+      await mount(tester, repository, player);
+      for (var i = 0; i < 3; i++) {
+        player.logController.add(
+          const PlayerLog(
+            prefix: 'ffmpeg',
+            level: 'error',
+            text: 'crypto: Unable to open resource',
+          ),
+        );
+      }
+      await settleOperations(tester);
+      expect(client.requests, hasLength(1));
+      expect(client.requests.single.path, '/route-1/_diagnostics');
+      expect(DiaryService.fullText, contains('httpStatus=403'));
+      expect(DiaryService.fullText, contains('host=segments.test'));
+      expect(DiaryService.fullText, isNot(contains('token=secret')));
+      expect(repository.fallbackCalls, 0);
+      expect(player.opened, hasLength(1));
+      await unmount(tester, player);
+    }, createHttpClient: (_) => client);
+  });
+
+  for (final reachable in [true, false]) {
+    testWidgets('loopback diagnosis distinguishes reachability $reachable', (
+      tester,
+    ) async {
+      DiaryService.clear();
+      addTearDown(DiaryService.clear);
+      final repository = _DiagnosticsRepository();
+      final player = ScriptedPlayer();
+      final client = _DiagnosticsClient(
+        status: HttpStatus.noContent,
+        failure: reachable
+            ? null
+            : const SocketException(
+                'private diagnostic token=secret',
+                osError: OSError('Connection refused', 61),
+              ),
+      );
+      await HttpOverrides.runZoned(() async {
+        await mount(tester, repository, player);
+        for (var i = 0; i < 3; i++) {
+          player.logController.add(
+            const PlayerLog(
+              prefix: 'ffmpeg',
+              level: 'error',
+              text: 'Connection to tcp://127.0.0.1:51234 failed: Connection refused',
+            ),
+          );
+        }
+        await settleOperations(tester);
+        expect(client.requests, hasLength(1));
+        expect(client.findProxy!(client.requests.single), 'DIRECT');
+        expect(DiaryService.fullText, contains('localReady=true'));
+        expect(DiaryService.fullText, contains('localRestarted=true'));
+        expect(DiaryService.fullText, contains('原生解析时自检=true, 服务重建=true'));
+        expect(DiaryService.fullText, contains(
+          reachable ? 'Dart直连可达, httpStatus=204' : 'Dart直连失败, type=SocketException, osCode=61',
+        ));
+        expect(DiaryService.fullText, isNot(contains('token=secret')));
+        expect(repository.fallbackCalls, 0);
+        await unmount(tester, player);
+      }, createHttpClient: (_) => client);
+    });
+  }
+
+  test('playback plans retain local health state from the native core', () {
+    final plan = PlaybackPlan.fromJson({
+      'url': 'http://127.0.0.1:51234/session/asset.m3u8',
+      'localReady': true,
+      'localRestarted': true,
+    });
+    expect(plan.localReady, isTrue);
+    expect(plan.localRestarted, isTrue);
+    final legacy = PlaybackPlan.fromJson({'url': 'https://media.test/a.mp4'});
+    expect(legacy.localReady, isFalse);
+    expect(legacy.localRestarted, isFalse);
+  });
+
+  testWidgets('invalid diagnostic data still confirms loopback is reachable', (
+    tester,
+  ) async {
+    DiaryService.clear();
+    addTearDown(DiaryService.clear);
+    final player = ScriptedPlayer();
+    final client = _DiagnosticsClient(malformed: true);
+    await HttpOverrides.runZoned(() async {
+      await mount(tester, _DiagnosticsRepository(), player);
+      player.logController.add(const PlayerLog(
+        prefix: 'stream', level: 'error', text: 'Failed to open local media',
+      ));
+      await settleOperations(tester);
+      expect(DiaryService.fullText, contains('Dart直连可达, httpStatus=200, 诊断读取失败'));
+      expect(DiaryService.fullText, isNot(contains('Dart直连失败')));
+      await unmount(tester, player);
+    }, createHttpClient: (_) => client);
+  });
 
   testWidgets(
     'duplicate errors switch once while keeping progress, rate and pause state',
@@ -54,7 +180,7 @@ void main() {
       final repository = RouteRepository();
       final player = ScriptedPlayer();
       await mount(tester, repository, player);
-      await tester.tap(find.byTooltip('播放倍速'));
+      await tester.tap(find.byKey(const ValueKey('player-speed')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('1.5x').last);
       await tester.pumpAndSettle();
@@ -62,7 +188,7 @@ void main() {
       await tester.pumpAndSettle();
       await player.seek(const Duration(seconds: 28));
       await tester.pump();
-      await tester.tap(find.byTooltip('暂停'));
+      await tester.tap(find.byTooltip('暂停播放'));
       await settleOperations(tester);
       player.fail();
       await tester.pump();
@@ -134,4 +260,176 @@ void main() {
       expect(repository.active, isEmpty);
     },
   );
+
+  testWidgets('picture-in-picture hides app overlay controls', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(AppDevice.channel, (call) async {
+      switch (call.method) {
+        case 'pictureInPictureStatus':
+          return {'supported': true, 'active': false};
+        case 'enterPictureInPicture':
+          return {'supported': true, 'active': true, 'requested': true};
+      }
+      return null;
+    });
+    try {
+      final repository = RouteRepository();
+      final player = ScriptedPlayer();
+      await mount(tester, repository, player, size: const Size(390, 844));
+      expect(
+        find.byKey(const ValueKey('player-picture-in-picture')),
+        findsOneWidget,
+      );
+      expect(find.text('选集'), findsOneWidget);
+      expect(find.text('简介'), findsOneWidget);
+      expect(find.text('下载'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-picture-in-picture')));
+      await tester.pump();
+      await tester.pump();
+      await settleOperations(tester);
+      expect(
+        find.byKey(const ValueKey('player-picture-in-picture')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('player-speed')), findsNothing);
+      expect(find.byKey(const ValueKey('player-quality')), findsNothing);
+      expect(find.byKey(const ValueKey('player-progress')), findsNothing);
+      expect(find.text('选集'), findsNothing);
+      expect(find.text('简介'), findsNothing);
+      expect(find.text('下载'), findsNothing);
+      await unmount(tester, player);
+    } finally {
+      messenger.setMockMethodCallHandler(AppDevice.channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('mobile player pane starts below the system status area', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final repository = RouteRepository();
+      final player = ScriptedPlayer();
+      await mount(
+        tester,
+        repository,
+        player,
+        size: const Size(390, 844),
+        padding: const FakeViewPadding(top: 32),
+      );
+      final surface = tester.getRect(
+        find.byKey(const ValueKey('player-gesture-surface')),
+      );
+      expect(surface.top, greaterThanOrEqualTo(32));
+      await unmount(tester, player);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      tester.view.resetPadding();
+    }
+  });
+
+  testWidgets('compact player tools stay clustered instead of evenly spread', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(AppDevice.channel, (call) async {
+      if (call.method == 'pictureInPictureStatus') {
+        return {'supported': true, 'active': false};
+      }
+      return null;
+    });
+    try {
+      final repository = RouteRepository();
+      final player = ScriptedPlayer();
+      await mount(tester, repository, player, size: const Size(390, 844));
+      final speed = tester.getRect(find.byKey(const ValueKey('player-speed')));
+      final quality = tester.getRect(
+        find.byKey(const ValueKey('player-quality')),
+      );
+      final pip = tester.getRect(
+        find.byKey(const ValueKey('player-picture-in-picture')),
+      );
+      expect(quality.left - speed.right, lessThan(8));
+      expect(pip.left - quality.right, lessThan(8));
+      expect(pip.right, greaterThan(330));
+      await unmount(tester, player);
+    } finally {
+      messenger.setMockMethodCallHandler(AppDevice.channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+}
+
+class _DiagnosticsRepository extends RouteRepository {
+  @override
+  PlaybackPlan plan(bool alternate) {
+    final original = super.plan(alternate);
+    return PlaybackPlan(
+      url: 'http://127.0.0.1:51234/${original.session}/asset.m3u8',
+      session: original.session,
+      routeIndex: original.routeIndex,
+      routeCount: original.routeCount,
+      localReady: true,
+      localRestarted: true,
+    );
+  }
+}
+
+class _DiagnosticsClient extends Fake implements HttpClient {
+  _DiagnosticsClient({this.status = HttpStatus.ok, this.failure, this.malformed = false});
+  final int status;
+  final SocketException? failure;
+  final bool malformed;
+  final requests = <Uri>[];
+
+  @override
+  Duration? connectionTimeout;
+
+  @override
+  String Function(Uri)? findProxy;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    requests.add(url);
+    if (failure != null) throw failure!;
+    return _DiagnosticsRequest(status, malformed);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _DiagnosticsRequest extends Fake implements HttpClientRequest {
+  _DiagnosticsRequest(this.status, this.malformed);
+  final int status;
+  final bool malformed;
+  @override
+  Future<HttpClientResponse> close() async => _DiagnosticsResponse(status, malformed);
+}
+
+class _DiagnosticsResponse extends Fake implements HttpClientResponse {
+  _DiagnosticsResponse(this.status, this.malformed);
+  final int status;
+  final bool malformed;
+  @override
+  int get statusCode => status;
+
+  @override
+  Stream<S> transform<S>(StreamTransformer<List<int>, S> streamTransformer) {
+    return Stream<List<int>>.value(
+      utf8.encode(
+        malformed ? '{broken' : jsonEncode({
+          'stage': '媒体响应',
+          'host': 'segments.test',
+          'httpStatus': 403,
+          'message': 'HTTP 403 https://segments.test/private/seg.ts?token=secret',
+        }),
+      ),
+    ).transform(streamTransformer);
+  }
 }
