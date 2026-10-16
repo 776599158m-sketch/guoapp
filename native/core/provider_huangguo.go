@@ -111,9 +111,9 @@ func canonicalProviderSource(source string) string {
 		return sourceHongguo
 	case "huangju", "huangju.net", "api.huangju.net":
 		return sourceHuangju
-	case "yeguo", "ygdj7.com", "www.ygdj7.com", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "www.yeguodj.com":
+	case "yeguo", "ygdj7.com", "www.ygdj7.com", "ygdj15.com", "www.ygdj15.com", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "www.yeguodj.com":
 		return sourceYeguo
-	case "dsd", "dsd.com.se", "www.dsd.com.se":
+	case "dsd", "dsd.com.se", "www.dsd.com.se", "dsd901.com", "www.dsd901.com", "dsd901.lol", "www.dsd901.lol":
 		return sourceDSD
 	case "cloudfront":
 		return sourceCloudFront
@@ -444,7 +444,11 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 		}
 	}
 	if len(candidates) > 1 && lastErr != nil {
-		return "", fmt.Errorf("黄果来源请求失败：已尝试 %d 个域名，最后错误：%w", tried, lastErr)
+		name := "黄果"
+		if providerSourceForURL(rawURL) == sourceDSD {
+			name = "帝果"
+		}
+		return "", fmt.Errorf("%s来源请求失败：已尝试 %d 个域名，最后错误：%w", name, tried, lastErr)
 	}
 	return "", lastErr
 }

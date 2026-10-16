@@ -69,12 +69,12 @@ func providerSourceForURL(raw string) string {
 		return sourceHongguo
 	case host == "huangju.net" || host == "www.huangju.net" || host == "api.huangju.net":
 		return sourceHuangju
-	case host == "ygdj7.com" || host == "www.ygdj7.com" ||
+	case host == "ygdj7.com" || host == "www.ygdj7.com" || host == "ygdj15.com" || host == "www.ygdj15.com" ||
 		host == "analyze.buxefaex.cc" || strings.HasSuffix(host, ".buxefaex.cc") ||
 		strings.HasSuffix(host, ".fzchosdi.cc") ||
 		host == "delta.ygrwdsgt.cc" || host == "yeguodj.com" || host == "www.yeguodj.com":
 		return sourceYeguo
-	case host == "dsd.com.se" || host == "www.dsd.com.se":
+	case host == "dsd.com.se" || host == "www.dsd.com.se" || host == "dsd901.com" || host == "www.dsd901.com" || host == "dsd901.lol" || host == "www.dsd901.lol":
 		return sourceDSD
 	case host == "sorani.net" || host == "www.sorani.net" || host == "api.sorani.cc" || host == "sorani.cc":
 		return sourceSorani
@@ -112,6 +112,11 @@ func (d *Downloader) providerURLCandidates(raw string) []string {
 	}
 	for _, candidate := range providerURLCandidates(raw) {
 		add(candidate)
+	}
+	if source == sourceDSD {
+		for _, base := range []string{dsdBaseURL, "https://www.dsd901.lol", "https://www.dsd.com.se"} {
+			add(rehostProviderURL(parsed, base))
+		}
 	}
 	return candidates
 }

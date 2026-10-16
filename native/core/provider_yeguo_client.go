@@ -30,7 +30,7 @@ import (
 
 const (
 	yeguoBaseURL    = "https://analyze.buxefaex.cc"
-	yeguoTransitURL = "https://ygdj7.com"
+	yeguoTransitURL = "https://ygdj15.com"
 )
 
 var (
@@ -42,6 +42,7 @@ var (
 	yeguoTransitWords     = regexp.MustCompile(`(?s)\bwords\s*=\s*["']([^"']+)["']\s*\.split\(["'],["']\)`)
 	yeguoTransitLiteral   = regexp.MustCompile(`https?://[a-z0-9-]+(?:\.[a-z0-9-]+)+/?`)
 	yeguoTransitHostLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	yeguoScriptBase       = regexp.MustCompile("\\b([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*=\\s*\\(\\s*\\)\\s*=>\\s*[\"'\\x60]([^\"'\\x60\\\\\\r\\n]+)[\"'\\x60]")
 )
 
 type yeguoAccess struct {
@@ -113,7 +114,7 @@ func isYeguoActiveSite(raw string) bool {
 	host := strings.ToLower(address.Hostname())
 	return host == "analyze.buxefaex.cc" ||
 		strings.HasSuffix(host, ".buxefaex.cc") ||
-		strings.HasSuffix(host, ".fzchosdi.cc")
+		strings.HasSuffix(host, ".fzchosdi.cc") || host == "yeguodj.com" || host == "www.yeguodj.com"
 }
 
 func yeguoTransitDecodedText(body string) string {
@@ -181,7 +182,7 @@ func yeguoTransitSites(body string) []string {
 	for _, match := range yeguoTransitLiteral.FindAllString(text, 32) {
 		if parsed, err := url.Parse(match); err == nil {
 			host := strings.ToLower(parsed.Hostname())
-			if strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".fzchosdi.cc") {
+			if isYeguoActiveSite("https://" + host) {
 				add(match)
 			}
 		}
@@ -200,11 +201,15 @@ func yeguoTransitSites(body string) []string {
 }
 
 func (client *yeguoAPIClient) discoverTransitSites(ctx context.Context) []string {
-	body, err := client.downloader.fetchProviderText(context.WithValue(ctx, providerTextNoCacheKey{}, true), yeguoTransitURL+"/", yeguoTransitURL+"/")
-	if err != nil {
-		return nil
+	for _, origin := range []string{yeguoTransitURL, "https://ygdj7.com"} {
+		body, err := client.downloader.fetchProviderText(context.WithValue(ctx, providerTextNoCacheKey{}, true), origin+"/", origin+"/")
+		if err == nil {
+			if sites := yeguoTransitSites(body); len(sites) > 0 {
+				return sites
+			}
+		}
 	}
-	return yeguoTransitSites(body)
+	return nil
 }
 
 func (client *yeguoAPIClient) configuration(ctx context.Context) (*yeguoAccess, error) {
@@ -355,6 +360,24 @@ func yeguoScriptURL(base, reference string) string {
 	return address.String()
 }
 
+func yeguoScriptAPIBase(script string) string {
+	for _, match := range yeguoScriptBase.FindAllStringSubmatch(script, 32) {
+		usage := regexp.MustCompile(`\bbaseURL\s*:\s*` + regexp.QuoteMeta(match[1]) + `\s*\(\s*\)`)
+		if !usage.MatchString(script) {
+			continue
+		}
+		address, err := url.Parse(match[2])
+		if err != nil || address.Scheme != "https" || address.User != nil || address.RawQuery != "" || address.Fragment != "" || address.Port() != "" || strings.TrimRight(address.Path, "/") != "/api.php" {
+			continue
+		}
+		host := strings.ToLower(address.Hostname())
+		if host == "yeguodj.com" || host == "www.yeguodj.com" {
+			return strings.TrimRight(address.String(), "/")
+		}
+	}
+	return ""
+}
+
 func yeguoPublicBytes(value string) []byte {
 	if !strings.Contains(value, "_") {
 		return []byte(value)
@@ -400,6 +423,7 @@ func (client *yeguoAPIClient) discoverConfiguration(ctx context.Context) (*yeguo
 	}
 	add(client.site)
 	add(yeguoBaseURL)
+	add("https://yeguodj.com")
 	var lastErr error
 	for index := 0; index < len(sites); index++ {
 		site := sites[index]
@@ -423,10 +447,7 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 	if err != nil {
 		return nil, err
 	}
-	apiBase, err := yeguoAPIBase(document, d.cfg.YeguoAPIURL)
-	if err != nil {
-		return nil, err
-	}
+	apiBase, baseErr := yeguoAPIBase(document, d.cfg.YeguoAPIURL)
 	entry := ""
 	for _, script := range providerHTMLNodes(document, func(node *html.Node) bool {
 		return node.Data == "script" && providerHTMLAttr(node, "type") == "module"
@@ -442,12 +463,16 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 	if err != nil {
 		return nil, err
 	}
+	if apiBase == "" {
+		apiBase = yeguoScriptAPIBase(entryBody)
+	}
 	imports := yeguoModuleImport.FindAllStringSubmatch(entryBody, 64)
 	sort.SliceStable(imports, func(i, j int) bool {
 		return !strings.Contains(imports[i][1], ",") && strings.Contains(imports[j][1], ",")
 	})
 	seen := map[string]bool{}
 	var lastErr error
+	var access *yeguoAccess
 	for _, imported := range imports {
 		if len(imported[1]) > 2400 {
 			continue
@@ -469,8 +494,13 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 			}
 			continue
 		}
-		access := parseYeguoPublicConfiguration(body)
+		if apiBase == "" {
+			apiBase = yeguoScriptAPIBase(body)
+		}
 		if access == nil {
+			access = parseYeguoPublicConfiguration(body)
+		}
+		if access == nil || apiBase == "" {
 			continue
 		}
 		var identifier [16]byte
@@ -479,6 +509,9 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 		}
 		access.base, access.site, access.identifier, access.loadedAt = apiBase, site, hex.EncodeToString(identifier[:]), time.Now()
 		return access, nil
+	}
+	if apiBase == "" {
+		return nil, errors.Join(baseErr, lastErr)
 	}
 	return nil, errors.Join(errors.New("野果接口配置已变化，暂时无法解码，请稍后重试"), lastErr)
 }

@@ -172,6 +172,9 @@ func (d *Downloader) fetchDSDDetail(ctx context.Context, sourceID string) (Drama
 	if err != nil {
 		return Drama{}, nil, err
 	}
+	if actual, parseErr := url.Parse(address); parseErr == nil {
+		site = providerMediaOrigin(actual)
+	}
 	return parseDSDDetail(document, address, sourceID, site)
 }
 
@@ -528,6 +531,9 @@ func (d *Downloader) resolveDSDMedia(ctx context.Context, task Task) (providerMe
 	document, pageURL, err := d.fetchProviderPage(ctx, dsdEpisodePage(site, sourceID, line, episode), site+"/", dsdUserAgent)
 	if err != nil {
 		return providerMedia{}, err
+	}
+	if actual, parseErr := url.Parse(pageURL); parseErr == nil {
+		site = providerMediaOrigin(actual)
 	}
 	player, found, err := parseDSDPlayer(document)
 	if err != nil {

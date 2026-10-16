@@ -68,7 +68,9 @@ func TestNativeLiteSourceHealthKeepsActualHTTPResponse(t *testing.T) {
 	}
 	for _, status := range []int{http.StatusOK, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
+			lastHost := ""
 			d := sourceFixtureDownloader(t, func(request *http.Request) (*http.Response, error) {
+				lastHost = request.URL.Hostname()
 				response := sourceFixtureResponse(request, status, `<html><body>no catalog here</body></html>`)
 				response.Header.Set("Cf-Ray", "fixture-ray")
 				return response, nil
@@ -80,7 +82,7 @@ func TestNativeLiteSourceHealthKeepsActualHTTPResponse(t *testing.T) {
 				t.Fatalf("unexpected result: %v %+v", err, report)
 			}
 			step := report.Steps[0]
-			if step.State != "failed" || step.HTTPStatus != status || step.Host != "www.dsd.com.se" || step.CFRay != "fixture-ray" {
+			if step.State != "failed" || step.HTTPStatus != status || step.Host != lastHost || step.CFRay != "fixture-ray" {
 				t.Fatalf("lost actual HTTP response on validation failure: %+v", step)
 			}
 		})
