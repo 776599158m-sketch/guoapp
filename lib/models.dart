@@ -17,7 +17,7 @@ class SourceSite {
       id == 'hanxiaoquan';
   bool get searchSuggestions => id == 'hongguo';
   String get groupId => switch (id) {
-    'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
+    'huangguoai' || 'cloudfront' => 'huangguo',
     _ => id,
   };
   String get groupName => groupId == 'huangguo' ? '黄果' : name;
