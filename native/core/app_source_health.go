@@ -92,6 +92,15 @@ func (engine *nativeEngine) checkSource(ctx context.Context, source string, sele
 		if err != nil {
 			failure = err
 			step.State, step.Message = "failed", publicError(err).Error()
+			var requestError *url.Error
+			if errors.As(err, &requestError) {
+				step.Host, step.HTTPStatus, step.CFRay = "", 0, ""
+				if address, parseErr := url.Parse(requestError.URL); parseErr == nil {
+					step.Host = address.Hostname()
+				}
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				step.Host, step.HTTPStatus, step.CFRay = "", 0, ""
+			}
 			var backoff *requestBackoff
 			if errors.As(err, &backoff) {
 				step.HTTPStatus, step.Host = backoff.status, backoff.host
