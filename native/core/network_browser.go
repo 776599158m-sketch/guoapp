@@ -61,10 +61,16 @@ func (transport *huangguoBrowserTransport) entryDialContext() func(context.Conte
 		if err != nil || net.ParseIP(host) != nil || !sourceEntryDNSHost(host) {
 			return direct.DialContext(ctx, network, addr)
 		}
-		addresses, lookupErr := transport.resolver.lookup(ctx, host)
-		if lookupErr != nil || len(addresses) == 0 {
+		endpoints := transport.resolver.endpoints
+		if strings.EqualFold(host, "huangguo.video") {
+			// 该域名托管在 Cloudflare，而阿里 DoH 对它返回的地址在手机网络上不可连接。
+			endpoints = transport.resolver.endpointsWithFirst("https://cloudflare-dns.com/dns-query")
+		}
+		entry, lookupErr := transport.resolver.queryWithEndpoints(ctx, host, "", endpoints)
+		if lookupErr != nil || len(entry.addresses) == 0 {
 			return direct.DialContext(ctx, network, addr)
 		}
+		addresses := entry.addresses
 		var lastErr error
 		for _, address := range addresses {
 			conn, dialErr := direct.DialContext(ctx, network, net.JoinHostPort(address, port))

@@ -359,7 +359,7 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 	if referer == "" {
 		referer = rawURL
 	}
-	candidates := d.orderProviderCandidates(d.providerURLCandidates(rawURL), providerSourceForURL(rawURL))
+	candidates := d.orderProviderCandidates(rawURL, d.providerURLCandidates(rawURL), providerSourceForURL(rawURL))
 	var lastErr error
 	tried := 0
 	for _, candidate := range candidates {
@@ -489,7 +489,7 @@ func providerURLCandidateOrigin(candidate string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-func (d *Downloader) orderProviderCandidates(candidates []string, source string) []string {
+func (d *Downloader) orderProviderCandidates(rawURL string, candidates []string, source string) []string {
 	if source == "" || len(candidates) < 2 {
 		return candidates
 	}
@@ -499,20 +499,36 @@ func (d *Downloader) orderProviderCandidates(candidates []string, source string)
 	if preferred == "" {
 		return candidates
 	}
-	index := -1
 	for i, candidate := range candidates {
-		if providerURLCandidateOrigin(candidate) == preferred {
-			index = i
-			break
+		if providerURLCandidateOrigin(candidate) != preferred {
+			continue
 		}
+		if i == 0 {
+			return candidates
+		}
+		ordered := make([]string, 0, len(candidates))
+		ordered = append(ordered, candidates[i])
+		ordered = append(ordered, candidates[:i]...)
+		ordered = append(ordered, candidates[i+1:]...)
+		return ordered
 	}
-	if index <= 0 {
+	// 成功入口可能来自另一个请求生成的镜像（生成种子是完整 URL），
+	// 它不在本次候选里，此时把它按同一路径插到最前。
+	target, err := url.Parse(rawURL)
+	if err != nil {
 		return candidates
 	}
-	ordered := make([]string, 0, len(candidates))
-	ordered = append(ordered, candidates[index])
-	ordered = append(ordered, candidates[:index]...)
-	ordered = append(ordered, candidates[index+1:]...)
+	origin, err := url.Parse(preferred)
+	if err != nil || origin.Host == "" || origin.Scheme != "https" {
+		return candidates
+	}
+	prepended := rehostProviderURL(target, preferred)
+	if prepended == "" {
+		return candidates
+	}
+	ordered := make([]string, 0, len(candidates)+1)
+	ordered = append(ordered, prepended)
+	ordered = append(ordered, candidates...)
 	return ordered
 }
 
