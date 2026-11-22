@@ -37,6 +37,13 @@ func sourceEntryDNSHost(host string) bool {
 	}
 }
 
+// mediaCDNHost 标记按 GeoDNS 分区的媒体分发域名：它们的境外节点在境内不可达，
+// 解析时必须先走本地线路，不能用国外 ECS 取到的地址。黄果旧版的分片全部由
+// lkkwip.cn 下发，实测同域名国内地址返回 200、境外地址 TLS 握手即失败。
+func mediaCDNHost(host string) bool {
+	return protectedCDNHost(host)
+}
+
 func validateCDNAddresses(addresses []string) error {
 	if len(addresses) == 0 {
 		return errors.New("CDN 没有可用的公网地址")

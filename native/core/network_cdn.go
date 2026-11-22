@@ -66,7 +66,13 @@ func (transport *cdnTransport) RoundTrip(request *http.Request) (*http.Response,
 		return nil, request.Context().Err()
 	}
 	lastErr := err
+	// 部分媒体域名用 GeoDNS：带国外 ECS 会返回境外节点，而这些节点在境内
+	// TLS 握手直接被重置（实测 sjljsla.lkkwip.cn 的境外地址即如此）。媒体域名
+	// 先按不带 ECS 的本地线路解析，再退国外 ECS；其余入口保持原顺序。
 	subnets := []string{dnsAlternateSubnet, ""}
+	if mediaCDNHost(request.URL.Hostname()) {
+		subnets = []string{"", dnsAlternateSubnet}
+	}
 	for _, subnet := range subnets {
 		entry, lookupErr := transport.resolver.lookupEntry(request.Context(), request.URL.Hostname(), subnet)
 		if lookupErr != nil {
