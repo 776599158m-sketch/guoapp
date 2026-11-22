@@ -186,6 +186,14 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			media.Referer = client.host + "/home"
 		}
 	}
+	if chapter.Source == sourceHuangguoAI {
+		if _, sourceID, valid := splitProviderDramaID(task.DramaID); valid {
+			episode := chapter.EpisodeString(task.Index)
+			if apiMedia, apiErr := d.resolveHuangguoAIPlayback(ctx, sourceID, episode, d.providerBaseURL(sourceHuangguoAI)+"/"); apiErr == nil {
+				return apiMedia, nil
+			}
+		}
+	}
 	if chapter.PageURL != "" && (chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo) {
 		responses := &playbackResponseURLs{}
 		pageContext := context.WithValue(ctx, playbackResponseURLsKey{}, responses)

@@ -99,6 +99,9 @@ func TestHuangguoAIPlaybackValidatesRequestedDramaAndPage(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			requests := 0
 			d := sourceFixtureDownloader(t, func(request *http.Request) (*http.Response, error) {
+				if request.Method == http.MethodPost {
+					return sourceFixtureResponse(request, 404, ""), nil
+				}
 				requests++
 				if request.URL.Path != fixture.path {
 					t.Fatalf("unexpected resource: %s", request.URL.Path)
