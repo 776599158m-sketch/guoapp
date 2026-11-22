@@ -60,7 +60,7 @@ func awaitSourceTask(t *testing.T, engine *nativeEngine, source string) nativeSo
 
 func TestSourceUpdatesPreservePagesOtherSourcesAndMetadata(t *testing.T) {
 	engine := sourceFixtureEngine(t, func(request *http.Request) (*http.Response, error) {
-		if !strings.Contains(request.URL.Path, "/api/videos/category/") {
+		if request.URL.Path != "/api/videos" || request.URL.Query().Get("cate_id") == "" {
 			return nil, errors.New("only catalog text is allowed")
 		}
 		id := "new"

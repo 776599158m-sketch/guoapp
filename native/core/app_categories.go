@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -17,11 +18,11 @@ type nativeCategory struct {
 	Name string `json:"name"`
 }
 
+// 站点 2026-11 起把分类改成数字 cate_id，旧的 ai-duanju / ai-huanlian 等
+// slug 一律返回「分类不存在」；这里按站点首页给出的 24 短剧、25 漫剧取值。
 var nativeAICategories = []nativeCategory{
-	{ID: "ai-duanju", Name: "AI 短剧"},
-	{ID: "ai-manju", Name: "AI 漫剧"},
-	{ID: "ai-huanlian", Name: "AI 换脸"},
-	{ID: "ai-mogai", Name: "AI 魔改"},
+	{ID: "24", Name: "AI 短剧"},
+	{ID: "25", Name: "AI 漫剧"},
 }
 
 func nativeCatalogKey(source, category string) string {
@@ -177,8 +178,24 @@ func parseHuangguoVideoCategories(body string) []nativeCategory {
 	return categories
 }
 
-func (d *Downloader) fetchHuangguoAICatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
-	categories := nativeAICategories
+// huangguoAICatalogPagination 读取站点返回的 pagination.pages 与 pagination.page，
+// 缺字段时返回 0 表示未知，由调用方退回按条数判断。
+func huangguoAICatalogPagination(body string) (pages, page int) {
+	var payload struct {
+		Data struct {
+			Pagination struct {
+				Page  int `json:"page"`
+				Pages int `json:"pages"`
+			} `json:"pagination"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return 0, 0
+	}
+	return payload.Data.Pagination.Pages, payload.Data.Pagination.Page
+}
+
+func (d *Downloader) fetchHuangguoAICatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {	categories := nativeAICategories
 	if category != "" {
 		for _, entry := range categories {
 			if entry.ID == category {
@@ -189,6 +206,8 @@ func (d *Downloader) fetchHuangguoAICatalogPage(ctx context.Context, page int, c
 	}
 	type categoryResult struct {
 		items []Drama
+		pages int
+		page  int
 		err   error
 	}
 	results := make([]categoryResult, len(categories))
@@ -205,10 +224,11 @@ func (d *Downloader) fetchHuangguoAICatalogPage(ctx context.Context, page int, c
 				results[index].err = ctx.Err()
 				return
 			}
-			address := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", d.providerBaseURL(sourceHuangguoAI), url.PathEscape(entry.ID), page)
-			body, err := d.fetchProviderText(ctx, address, d.providerBaseURL(sourceHuangguoAI)+"/"+entry.ID+"/")
+			address := fmt.Sprintf("%s/api/videos?cate_id=%s&sort=hot&page=%d&size=24", d.providerBaseURL(sourceHuangguoAI), url.QueryEscape(entry.ID), page)
+			body, err := d.fetchProviderText(ctx, address, d.providerBaseURL(sourceHuangguoAI)+"/")
 			if err == nil {
 				results[index].items = parseHuangguoAIJSONCards([]byte(body), address, entry.Name)
+				results[index].pages, results[index].page = huangguoAICatalogPagination(body)
 			}
 			if err != nil {
 				results[index].err = fmt.Errorf("%s: %w", entry.Name, err)
@@ -221,7 +241,13 @@ func (d *Downloader) fetchHuangguoAICatalogPage(ctx context.Context, page int, c
 	more := false
 	for _, result := range results {
 		items = append(items, result.items...)
-		more = more || len(result.items) >= 24 || result.err != nil
+		// 站点给了总页数就按它判断，避免尾页恰好满一页时多请求一次空页。
+		if result.pages > 0 {
+			more = more || result.page < result.pages
+		} else {
+			more = more || len(result.items) >= 24
+		}
+		more = more || result.err != nil
 		if result.err != nil {
 			failures = append(failures, result.err)
 		}

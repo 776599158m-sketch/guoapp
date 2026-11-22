@@ -6,12 +6,12 @@ import (
 )
 
 func TestOrderProviderCandidatesPrefersRememberedHost(t *testing.T) {
-	rawURL := "https://huangguoai.com/api/videos/category/ai-manju?sort=hot&page=1&size=24"
+	rawURL := "https://huangguoai.com/api/videos?cate_id=25&sort=hot&page=1&size=24"
 	candidates := []string{
-		"https://huangguoai.com/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-		"https://ttvoij.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-		"https://thu.agdkczeyx.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-		"https://pku.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
+		"https://huangguoai.com/api/videos?cate_id=25&sort=hot&page=1&size=24",
+		"https://ttvoij.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+		"https://thu.agdkczeyx.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+		"https://pku.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
 	}
 	cases := []struct {
 		name      string
@@ -24,10 +24,10 @@ func TestOrderProviderCandidatesPrefersRememberedHost(t *testing.T) {
 			preferred: "https://thu.agdkczeyx.cc",
 			source:    sourceHuangguoAI,
 			want: []string{
-				"https://thu.agdkczeyx.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://huangguoai.com/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://ttvoij.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://pku.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
+				"https://thu.agdkczeyx.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://huangguoai.com/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://ttvoij.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://pku.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
 			},
 		},
 		{
@@ -35,11 +35,11 @@ func TestOrderProviderCandidatesPrefersRememberedHost(t *testing.T) {
 			preferred: "https://86ed8d.ediayikma.cc",
 			source:    sourceHuangguoAI,
 			want: []string{
-				"https://86ed8d.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://huangguoai.com/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://ttvoij.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://thu.agdkczeyx.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
-				"https://pku.ediayikma.cc/api/videos/category/ai-manju?sort=hot&page=1&size=24",
+				"https://86ed8d.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://huangguoai.com/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://ttvoij.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://thu.agdkczeyx.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
+				"https://pku.ediayikma.cc/api/videos?cate_id=25&sort=hot&page=1&size=24",
 			},
 		},
 		{
