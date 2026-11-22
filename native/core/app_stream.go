@@ -107,6 +107,32 @@ func (stream *nativeStreamServer) nativeRequest(request *http.Request) (*http.Re
 
 var nativePlaylistURI = regexp.MustCompile(`URI="([^"]+)"`)
 
+// 分片按地址哈希命名，同一地址内容不变，可以交给播放器缓存；
+// 播放列表按会话身份改写、诊断只在当前状态有意义，两者都不缓存。
+func isCacheableStreamAsset(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".ts", ".m4s", ".mp4", ".aac", ".m4a", ".mp3":
+		return true
+	default:
+		return false
+	}
+}
+
+func streamAssetContentType(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".ts":
+		return "video/mp2t"
+	case ".m4s", ".mp4":
+		return "video/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".m4a", ".mp3":
+		return "audio/mpeg"
+	default:
+		return ""
+	}
+}
+
 func newNativeStreamServer(d *Downloader) (*nativeStreamServer, error) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -300,7 +326,13 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		http.Error(writer, "播放已结束", http.StatusGone)
 		return
 	}
-	writer.Header().Set("Cache-Control", "no-store")
+	// 分片按地址哈希命名、内容不变，允许播放器缓存；播放列表与诊断保持不缓存。
+	cacheable := isCacheableStreamAsset(parts[1])
+	if cacheable {
+		writer.Header().Set("Cache-Control", "private, max-age=600, immutable")
+	} else {
+		writer.Header().Set("Cache-Control", "no-store")
+	}
 	if parts[1] == "_diagnostics" {
 		session.mu.Lock()
 		failure := session.failure
@@ -335,7 +367,9 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 	defer cancel()
 	stop := context.AfterFunc(session.ctx, cancel)
 	defer stop()
-	writer.Header().Set("Cache-Control", "no-store")
+	if !cacheable {
+		writer.Header().Set("Cache-Control", "no-store")
+	}
 	if len(asset.data) > 0 && asset.total > int64(len(asset.data)) {
 		if stream.nativeServePrefix(ctx, writer, request, session, asset) {
 			return
@@ -435,6 +469,10 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		if value := response.Header.Get(name); value != "" {
 			writer.Header().Set(name, value)
 		}
+	}
+	// 上游 CDN 对 HLS 分片一律回 binary/octet-stream，这里按后缀给出准确类型。
+	if segmentType := streamAssetContentType(parts[1]); segmentType != "" {
+		writer.Header().Set("Content-Type", segmentType)
 	}
 	writer.WriteHeader(response.StatusCode)
 	if request.Method == http.MethodGet {
