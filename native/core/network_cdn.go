@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -82,22 +84,29 @@ func (transport *cdnTransport) RoundTrip(request *http.Request) (*http.Response,
 			}
 			continue
 		}
+		var fresh []string
 		for _, address := range entry.addresses {
-			if tried[address] || len(tried) >= 4 {
-				continue
+			if !tried[address] {
+				fresh = append(fresh, address)
 			}
-			tried[address] = true
-			response, err = transport.roundTripAddress(request, proxyURL, routeKey, address)
-			if err == nil {
+		}
+		// 同一域名的多个节点里可能只有部分可达（实测国内四个全通、境外两个
+		// 握手即失败），因此并发探测而不是串行；串行会在前几个失败地址上
+		// 耗尽配额，把真正可用的节点挤掉。
+		if response, address, probeErr := transport.probeAddresses(request, proxyURL, routeKey, fresh); address != "" {
+			for _, candidate := range fresh {
+				tried[candidate] = true
+			}
+			if response != nil {
 				transport.mu.Lock()
 				transport.preferred[routeKey] = cdnRoute{address: address, expires: entry.expires}
 				transport.mu.Unlock()
 				return response, nil
 			}
-			if request.Context().Err() != nil {
-				return nil, request.Context().Err()
-			}
-			lastErr = err
+			lastErr = probeErr
+		}
+		if request.Context().Err() != nil {
+			return nil, request.Context().Err()
 		}
 	}
 	if entry && request.Context().Err() == nil {
@@ -107,7 +116,72 @@ func (transport *cdnTransport) RoundTrip(request *http.Request) (*http.Response,
 		}
 		lastErr = err
 	}
-	return nil, fmt.Errorf("资源 %s 连接失败（已尝试备用 DNS 地址）: %w", request.URL.Hostname(), publicError(lastErr))
+	// 日志里必须能看出到底尝试了哪些地址：同一域名按线路会解析到完全不同的
+	// 节点，只有回执地址才能判断是线路问题还是节点问题。
+	triedText := "无可用解析"
+	if len(tried) > 0 {
+		addresses := make([]string, 0, len(tried))
+		for address := range tried {
+			addresses = append(addresses, address)
+		}
+		sort.Strings(addresses)
+		triedText = strings.Join(addresses, ",")
+	}
+	return nil, fmt.Errorf("资源 %s 连接失败（已尝试地址 %s）: %w", request.URL.Hostname(), triedText, publicError(lastErr))
+}
+
+// probeAddresses 并发尝试一组地址，返回第一个成功响应及其地址。全部失败时
+// 返回最后一条错误；没有可试地址时返回空地址。
+func (transport *cdnTransport) probeAddresses(request *http.Request, proxyURL *url.URL, routeKey string, addresses []string) (*http.Response, string, error) {
+	if len(addresses) == 0 {
+		return nil, "", nil
+	}
+	type probeResult struct {
+		response *http.Response
+		address  string
+		err      error
+	}
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	results := make(chan probeResult, len(addresses))
+	var group sync.WaitGroup
+	for _, address := range addresses {
+		group.Add(1)
+		go func(address string) {
+			defer group.Done()
+			response, err := transport.roundTripAddress(request.WithContext(ctx), proxyURL, routeKey, address)
+			if err == nil {
+				results <- probeResult{response: response, address: address}
+				return
+			}
+			results <- probeResult{address: address, err: err}
+		}(address)
+	}
+	go func() {
+		group.Wait()
+		close(results)
+	}()
+	var lastErr error
+	var won probeResult
+	wonAddress := ""
+	for result := range results {
+		if result.err == nil && wonAddress == "" {
+			won = result
+			wonAddress = result.address
+			cancel()
+			continue
+		}
+		if result.err != nil {
+			lastErr = result.err
+		}
+		if result.response != nil && result.response.Body != nil && result.address != wonAddress {
+			result.response.Body.Close()
+		}
+	}
+	if wonAddress != "" {
+		return won.response, wonAddress, nil
+	}
+	return nil, addresses[0], lastErr
 }
 
 func (transport *cdnTransport) roundTripAddress(request *http.Request, proxyURL *url.URL, routeKey, address string) (*http.Response, error) {
