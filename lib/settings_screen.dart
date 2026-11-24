@@ -16,6 +16,7 @@ import 'sources_screen.dart';
 import 'widgets.dart';
 import 'resource_settings_screen.dart';
 import 'lan_screen.dart';
+import 'diary_service.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -184,6 +185,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     builder: (_) => ProfilesScreen(store: widget.store),
                   ),
                 ),
+              ),
+              ListTile(
+                key: const ValueKey('diary-setting'),
+                leading: const Icon(Icons.receipt_long_rounded),
+                title: const Text('播放调试日记'),
+                subtitle: const Text('查看并复制应用运行与播放器的详细事件日志'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => DiaryService.showDiaryDialog(context),
               ),
               if (widget.store.canDownload)
                 ListTile(

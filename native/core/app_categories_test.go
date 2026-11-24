@@ -12,10 +12,10 @@ import (
 
 func TestNativeCategoryPaginationStaysIndependent(t *testing.T) {
 	engine := sourceFixtureEngine(t, func(request *http.Request) (*http.Response, error) {
-		if !strings.HasPrefix(request.URL.Path, "/api/videos/category/ai-") {
+		if request.URL.Path != "/api/videos" {
 			return nil, errors.New("only catalog JSON is permitted")
 		}
-		category := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
+		category := request.URL.Query().Get("cate_id")
 		page := request.URL.Query().Get("page")
 		count := 24
 		if page != "1" {
@@ -25,25 +25,25 @@ func TestNativeCategoryPaginationStaysIndependent(t *testing.T) {
 		for index := range rows {
 			rows[index] = map[string]any{"id": fmt.Sprintf("%s-%s-%d", category, page, index), "title": "合成分类剧集"}
 		}
-		body, _ := json.Marshal(map[string]any{"data": rows})
+		body, _ := json.Marshal(map[string]any{"data": map[string]any{"items": rows}})
 		return sourceFixtureResponse(request, 200, string(body)), nil
 	})
 	for _, input := range []nativeInput{
-		{Source: sourceHuangguoAI, Category: "ai-duanju", Page: 1},
-		{Source: sourceHuangguoAI, Category: "ai-duanju", Page: 2},
-		{Source: sourceHuangguoAI, Category: "ai-manju", Page: 1},
+		{Source: sourceHuangguoAI, Category: "24", Page: 1},
+		{Source: sourceHuangguoAI, Category: "24", Page: 2},
+		{Source: sourceHuangguoAI, Category: "25", Page: 1},
 	} {
 		if _, err := engine.nativeCatalog(context.Background(), input); err != nil {
 			t.Fatal(err)
 		}
 	}
-	short := engine.nativeCached(nativeCatalogKey(sourceHuangguoAI, "ai-duanju"))
-	comic := engine.nativeCached(nativeCatalogKey(sourceHuangguoAI, "ai-manju"))
+	short := engine.nativeCached(nativeCatalogKey(sourceHuangguoAI, "24"))
+	comic := engine.nativeCached(nativeCatalogKey(sourceHuangguoAI, "25"))
 	if short.Page != 2 || short.HasMore || len(short.Items) != 25 || comic.Page != 1 || !comic.HasMore || len(comic.Items) != 24 {
 		t.Fatal("category cursors or entries leaked", short.Page, short.HasMore, len(short.Items), comic.Page, comic.HasMore, len(comic.Items))
 	}
 	for _, row := range comic.Items {
-		if !strings.Contains(row.ID, "ai-manju") {
+		if !strings.Contains(row.ID, "25-") {
 			t.Fatal("another category was merged into the selected list")
 		}
 	}
@@ -52,7 +52,7 @@ func TestNativeCategoryPaginationStaysIndependent(t *testing.T) {
 	}
 	restored := &nativeEngine{directory: engine.directory, catalogs: map[string][]nativeDrama{}, catalogStates: map[string]nativeCatalogState{}}
 	restored.loadCatalogCache()
-	if restored.nativeCached(nativeCatalogKey(sourceHuangguoAI, "ai-duanju")).Page != 2 {
+	if restored.nativeCached(nativeCatalogKey(sourceHuangguoAI, "24")).Page != 2 {
 		t.Fatal("category position was not persisted")
 	}
 }

@@ -2,12 +2,13 @@ import argparse
 import hashlib
 import os
 import platform
+import plistlib
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
+import zipfile
 from pathlib import Path
 
 from app_build import BuildVariant, add_variant_argument
@@ -74,8 +75,9 @@ def main():
     parser.add_argument('--simulator', action='store_true', help='额外生成模拟器核心；不启动模拟器')
     parser.add_argument('--export-options', type=Path, help='使用自己的 Xcode 签名配置导出 IPA')
     add_variant_argument(parser)
+    parser.add_argument('--lite', action='store_true', help='构建独立的 iOS Lite 版')
     options = parser.parse_args()
-    variant = BuildVariant(options.all_sources)
+    variant = BuildVariant(options.all_sources, options.lite)
     build_core(options.simulator, variant)
     if options.core_only:
         return
@@ -87,31 +89,51 @@ def main():
     output = root / 'dist' / 'ios'
     output.mkdir(parents=True, exist_ok=True)
     version = re.search(r'^version:\s*(\S+)', (root / 'pubspec.yaml').read_text(), re.MULTILINE).group(1)
+    build_name = version.split('+')[0].split('-')[0]
+    release_arguments = [*variant.flutter_arguments, '--build-name=' + build_name]
     artifacts = []
     if options.export_options:
         config = options.export_options.expanduser().resolve()
         if not config.is_file():
             raise SystemExit('ExportOptions.plist 不存在。')
-        run([flutter, 'build', 'ipa', '--release', '--no-pub', '--export-options-plist', str(config), *variant.flutter_arguments])
+        run([flutter, 'build', 'ipa', '--release', '--no-pub', '--export-options-plist', str(config), *release_arguments])
         for package in (root / 'build' / 'ios' / 'ipa').glob('*.ipa'):
             destination = output / f'{variant.slug}-{version}-ios.ipa'
             shutil.copy2(package, destination)
             artifacts.append(destination)
     else:
-        run([flutter, 'build', 'ios', '--release', '--no-codesign', '--no-pub', *variant.flutter_arguments])
+        run([flutter, 'build', 'ios', '--release', '--no-codesign', '--no-pub', *release_arguments])
         application = root / 'build' / 'ios' / 'iphoneos' / 'Runner.app'
+        metadata = plistlib.loads((application / 'Info.plist').read_bytes())
+        if metadata['CFBundleShortVersionString'] != build_name:
+            raise SystemExit('iOS 版本号与构建参数不一致。')
+        if variant.lite and (metadata['CFBundleIdentifier'] != 'com.duanju.zhenguojian.lite' or
+                             metadata['CFBundleDisplayName'] != variant.name or
+                             'NSBonjourServices' in metadata or 'NSLocalNetworkUsageDescription' in metadata):
+            raise SystemExit('iOS Lite 应用标识或权限配置无效。')
         symbols = subprocess.check_output(['xcrun', 'nm', '-gU', str(application / 'Runner')], text=True)
         for symbol in ['_DuanjuRequest', '_DuanjuFree']:
             if symbol not in symbols:
                 raise SystemExit('iOS 包缺少 FFI 入口：' + symbol)
-        destination = output / f'{variant.slug}-{version}-ios-unsigned.ipa'
-        with tempfile.TemporaryDirectory(prefix='duanju-ipa-') as temporary:
-            payload = Path(temporary) / 'Payload'
-            payload.mkdir()
-            shutil.copytree(application, payload / 'Runner.app', symlinks=True)
-            shutil.rmtree(payload / 'Runner.app' / '_CodeSignature', ignore_errors=True)
-            run(['zip', '-qry', str(destination), 'Payload'], cwd=temporary)
+        destination = output / f'{variant.slug}-{version}-ios-unsigned-app.zip'
+        run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(application), str(destination)])
         artifacts.append(destination)
+        # 额外打包未签名 IPA：IPA 结构为 zip 内 Payload/Runner.app。
+        # 便于用户用 AltStore / Sideloadly / TrollStore 自签后直接安装。
+        payload = output / 'Payload'
+        if payload.exists():
+            shutil.rmtree(payload)
+        payload.mkdir(parents=True)
+        shutil.copytree(application, payload / application.name, symlinks=True)
+        ipa = output / f'{variant.slug}-{version}-ios-unsigned.ipa'
+        if ipa.exists():
+            ipa.unlink()
+        run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(payload), str(ipa)])
+        with zipfile.ZipFile(ipa) as package:
+            if 'Payload/Runner.app/Info.plist' not in package.namelist():
+                raise SystemExit('IPA 目录结构无效：缺少 Payload/Runner.app/Info.plist。')
+        shutil.rmtree(payload)
+        artifacts.append(ipa)
     if not artifacts:
         raise SystemExit('未生成 iOS 安装包。')
     checksums = []

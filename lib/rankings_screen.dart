@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'catalog_filters.dart';
 import 'core_bridge.dart';
 import 'detail_screen.dart';
+import 'diary_service.dart';
 import 'local_store.dart';
 import 'models.dart';
 import 'ranking_models.dart';
@@ -24,6 +27,8 @@ class RankingsScreen extends StatefulWidget {
 }
 
 class _RankingsScreenState extends State<RankingsScreen> {
+  static int _requestSequence = 0;
+  final _requestId = 'ranking-${++_requestSequence}';
   final _scroll = ScrollController();
   List<RankingBoard> _boards = [];
   RankingBoard? _board;
@@ -40,6 +45,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     widget.repository.catalogUpdates.addListener(_metadataChanged);
     _initialize();
   }
@@ -48,8 +54,21 @@ class _RankingsScreenState extends State<RankingsScreen> {
   void dispose() {
     widget.repository.catalogUpdates.removeListener(_metadataChanged);
     _generation++;
+    unawaited(widget.repository.cancelRankingRead(_requestId));
+    _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!mounted || !_hasMore || _loading || _more || !_scroll.hasClients) {
+      return;
+    }
+    final position = _scroll.position;
+    final threshold = (position.viewportDimension * 1.2).clamp(260.0, 720.0);
+    if (position.extentAfter <= threshold) {
+      _load(more: true);
+    }
   }
 
   void _metadataChanged() {
@@ -81,7 +100,10 @@ class _RankingsScreenState extends State<RankingsScreen> {
       if (mounted && generation == _generation) {
         setState(() {
           _loading = false;
-          _error = error.toString();
+          _error = interactiveFailureMessage(
+            error,
+            fallback: '榜单暂时无法加载，请稍后重试。',
+          );
         });
       }
     }
@@ -98,12 +120,18 @@ class _RankingsScreenState extends State<RankingsScreen> {
       _failedMore = false;
     });
     try {
-      final result = await widget.repository.rankings(
+      final result = await widget.repository.rankingRead(
         board.id,
+        requestId: _requestId,
         page: more ? _page + 1 : 1,
         force: force,
       );
       if (!mounted || generation != _generation) return;
+      if (result.warning.isNotEmpty) {
+        DiaryService.addPlayback(
+          '[Ranking] board=${board.id}, warning=${result.warning}',
+        );
+      }
       setState(() {
         final rows = <String, RankingItem>{
           if (more)
@@ -114,14 +142,23 @@ class _RankingsScreenState extends State<RankingsScreen> {
         _page = result.page;
         _hasMore = result.hasMore;
         _updated = result.updatedText;
-        _error = result.warning.isEmpty ? null : result.warning;
+        _error = result.warning.isEmpty
+            ? null
+            : interactiveFailureMessage(
+                AppFailure(result.warning),
+                fallback: '榜单更新失败，正在显示已保存的内容。',
+              );
         _loading = false;
         _more = false;
       });
     } catch (error) {
       if (mounted && generation == _generation) {
+        DiaryService.addPlayback('[Ranking] board=${board.id}, error=$error');
         setState(() {
-          _error = error.toString();
+          _error = interactiveFailureMessage(
+            error,
+            fallback: '榜单暂时无法加载，请稍后重试。',
+          );
           _failedMore = more;
           _loading = false;
           _more = false;
@@ -254,7 +291,18 @@ class _RankingsScreenState extends State<RankingsScreen> {
               ),
             Expanded(
               child: _loading && items.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          if (_board?.source == 'hongguo') ...[
+                            const SizedBox(height: 16),
+                            const Text('正在获取榜单，数据未完整返回时会自动重试'),
+                          ],
+                        ],
+                      ),
+                    )
                   : items.isEmpty
                   ? StatusPanel(
                       title: _error == null ? '暂无榜单内容' : '榜单暂时无法加载',

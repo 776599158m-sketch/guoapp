@@ -19,6 +19,30 @@ def dart_defines(*values):
 
 
 class AppBuildTests(unittest.TestCase):
+    def test_lite_flag_keeps_dart_and_native_editions_consistent(self):
+        variant = BuildVariant.from_dart_defines(dart_defines('LITE=true'))
+        self.assertTrue(variant.all_sources)
+        self.assertEqual(variant.name, '真果鉴 Lite')
+        self.assertEqual(variant.slug, 'zhenguojian-lite')
+        self.assertIn('--dart-define=LITE=true', variant.flutter_arguments)
+        self.assertIn('core.buildAllSources=true', variant.linker_flags)
+        self.assertIn('core.buildLite=true', variant.linker_flags)
+
+    def test_lite_ios_branding_removes_lan_permission_prompts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'Info.plist'
+            path.write_bytes(plistlib.dumps({
+                'CFBundleIdentifier': 'com.duanju.zhenguojian.lite',
+                'NSLocalNetworkUsageDescription': 'LAN',
+                'NSBonjourServices': ['_zgj-link._tcp'],
+            }))
+            configure(path, dart_defines('LITE=true'))
+            data = plistlib.loads(path.read_bytes())
+            self.assertEqual(data['CFBundleDisplayName'], '真果鉴 Lite')
+            self.assertEqual(data['CFBundleIdentifier'], 'com.duanju.zhenguojian.lite')
+            self.assertNotIn('NSBonjourServices', data)
+            self.assertNotIn('NSLocalNetworkUsageDescription', data)
+
     def test_omitted_or_false_flag_keeps_hongguo_only(self):
         for encoded in ['', dart_defines('ALL_SOURCES=false'), dart_defines('OTHER=true')]:
             variant = BuildVariant.from_dart_defines(encoded)
@@ -77,6 +101,7 @@ class AppBuildTests(unittest.TestCase):
                     with mock.patch.object(sys, 'argv', arguments), \
                             mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
                             mock.patch('shutil.which', return_value='/tools/flutter'), \
+                            mock.patch('platform.system', return_value='Linux'), \
                             mock.patch('subprocess.run') as run:
                         runpy.run_path(str(script), run_name='__main__')
                     calls = [call.args[0] for call in run.call_args_list]

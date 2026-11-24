@@ -13,6 +13,8 @@ import (
 var rankingScriptTags = regexp.MustCompile(`(?is)<script\b[^>]*>`)
 var rankingJSONLD = regexp.MustCompile(`(?is)<script\b[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>`)
 var rankingSourceID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
+var errHongguoRankingIncomplete = errors.New("红果榜单数据尚未完整返回，请稍后重试")
+var errHongguoRankingFormat = errors.New("红果榜单格式或分页已变化，请稍后重试")
 
 type hongguoRankingContent struct {
 	Success bool `json:"isSuccess"`
@@ -35,10 +37,10 @@ type hongguoRankingContent struct {
 }
 
 func parseHongguoRanking(body string, board rankingBoard, page int) (rankingPage, error) {
-	failure := errors.New("红果榜单格式或分页已变化，请稍后重试")
+	failure := errHongguoRankingFormat
 	loaderKey := "rank_" + board.path + "/page"
 	loader := nestedMap(parseRouterData(body), "loaderData", loaderKey)
-	if mapString(loader, "rankKey") != board.upstreamKey || mapString(loader, "pageNum") != strconv.Itoa(page) {
+	if len(loader) > 0 && (mapString(loader, "rankKey") != board.upstreamKey || mapString(loader, "pageNum") != strconv.Itoa(page)) {
 		return rankingPage{}, failure
 	}
 	var content hongguoRankingContent
@@ -68,7 +70,10 @@ func parseHongguoRanking(body string, board rankingBoard, page int) (rankingPage
 			break
 		}
 	}
-	if !content.Success || content.Rows == nil || content.Pagination.Page != page || content.Pagination.TotalPages < page || content.Pagination.TotalPages > 500 {
+	if !content.Success || content.Rows == nil {
+		return parseHongguoRankingDocument(body, board, page, loader)
+	}
+	if content.Pagination.Page != page || content.Pagination.TotalPages < page || content.Pagination.TotalPages > 500 {
 		return rankingPage{}, failure
 	}
 	result := rankingPage{Items: make([]rankingItem, 0, len(content.Rows)), TotalPages: content.Pagination.TotalPages, HasMore: page < content.Pagination.TotalPages, UpdatedText: mapString(loader, "updatedText")}
@@ -157,10 +162,14 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 			seen, previous := map[string]bool{}, 0
 			for _, item := range graph.Items {
 				parsed, err := url.Parse(item.URL)
-				if err != nil || !strings.HasPrefix(parsed.Path, "/detail/") {
+				if err != nil || parsed.Scheme != "" && parsed.Scheme != "http" && parsed.Scheme != "https" {
 					return rankingPage{}, failure
 				}
-				id := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/detail/"), "/")
+				parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+				if len(parts) != 2 || parts[0] != "detail" && parts[0] != "video" {
+					return rankingPage{}, failure
+				}
+				id := parts[1]
 				if !rankingSourceID.MatchString(id) || strings.TrimSpace(item.Name) == "" || item.Position <= previous || seen[id] {
 					return rankingPage{}, failure
 				}

@@ -3,11 +3,17 @@ package core
 import "errors"
 
 var buildAllSources = "false"
+var buildLite = "false"
+
+var errNativeLiteFeature = errors.New("Lite 版不支持此功能")
 
 var errNativeBuildSource = errors.New("当前版本不包含此站源")
 
 func nativeSourceAvailable(source string) bool {
 	source = canonicalProviderSource(source)
+	if buildLite == "true" && (source == "hanxiaoquan" || source == "guipian" || source == "sorani") {
+		return false
+	}
 	return source == sourceHongguo || buildAllSources == "true" && isHuangguoProviderSource(source)
 }
 
@@ -36,6 +42,12 @@ func nativeDownloadAvailable(job nativeDownloadJob) bool {
 }
 
 func nativeAuthorizeInput(input nativeInput) error {
+	if buildLite == "true" {
+		switch input.Action {
+		case "lan", "downloadDirectory", "storage", "moveDownloads", "workLease", "downloads", "enqueueDownloads", "controlDownloads", "controlDownloadBatch", "localPlayback", "prepareHandoff":
+			return errNativeLiteFeature
+		}
+	}
 	switch input.Action {
 	case "recommendations", "cachedRecommendations", "suggestions", "danmaku":
 		if !nativeSourceAvailable(sourceHongguo) {

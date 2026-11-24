@@ -84,7 +84,7 @@ func (d *Downloader) probeAPIHost(ctx context.Context, host string) error {
 		return err
 	}
 	request.Header.Set("User-Agent", userAgent)
-	response, err := d.doCatalogRequestWithTimeout(request, 4*time.Second)
+	response, err := d.doCatalogRequestWithTimeout(request, providerTimeout)
 	if err != nil {
 		return publicError(err)
 	}

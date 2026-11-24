@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
 import 'app_bottom_navigation.dart';
+import 'app_build.dart';
 import 'core_bridge.dart';
 import 'catalog_filters.dart';
 import 'catalog_browser.dart';
@@ -13,6 +14,7 @@ import 'catalog_sort_sheet.dart';
 import 'recommendations_screen.dart';
 import 'rankings_screen.dart';
 import 'detail_screen.dart';
+import 'playback_launch_screen.dart';
 import 'downloads_screen.dart';
 import 'local_store.dart';
 import 'lan_screen.dart';
@@ -21,8 +23,11 @@ import 'remote_widgets.dart';
 import 'widgets.dart';
 import 'vip_icon.dart';
 import 'settings_screen.dart';
+import 'lite_settings_screen.dart';
 import 'profiles_screen.dart';
 import 'search_input.dart';
+import 'source_gate_dialog.dart';
+import 'source_gate_taps.dart';
 import 'sources_screen.dart';
 import 'batch_download_screen.dart';
 import 'batch_downloads.dart';
@@ -53,7 +58,6 @@ class _HomeScreenState extends State<HomeScreen> {
   int _generation = 0;
   int _tab = 0;
   String _submittedQuery = '';
-  bool _failedMore = false;
   final _categorySelections = <String, String>{};
   late final CatalogBrowser _browser;
   bool _searchVisible = false;
@@ -65,9 +69,11 @@ class _HomeScreenState extends State<HomeScreen> {
   final _selectedDramas = <String, Drama>{};
   Timer? _cacheRefreshTimer;
   bool _refreshingUpdatedCache = false;
-  bool _updateNotice = false;
   bool _selectionMode = false;
   bool _showRecommendations = false;
+  final _recentTaps = RepeatTapGate();
+  String _sourceSignature = '';
+  bool _catalogLoadScheduled = false;
 
   List<SourceGroup> get _sourceGroups {
     final groups = SourceGroup.fromSources(widget.store.sources);
@@ -94,8 +100,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final names = online.map((source) => source.name).join('、');
     return online.length == _group.sources.length
-        ? '搜索${names}短剧'
-        : '搜索${names}及本机剧库';
+        ? '搜索$names'
+        : '搜索$names及本机剧库';
   }
 
   String get _category => _categorySelections[_group.id] ?? '';
@@ -144,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (widget.repository.supportsSourceManagement) {
       if (_group.sources.any((source) => _updater.busy(source.id))) return;
       _pauseCatalog();
-      setState(() => _updateNotice = true);
       await _updater.update(_group.sources);
       return;
     }
@@ -154,6 +159,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _updateChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// 密码锁切换后可见站源会变，这里把当前站源归一化到仍然可见的站源。
+  void _sourcesChanged() {
+    if (!mounted) return;
+    final visible = widget.store.sources;
+    final signature = visible.map((site) => site.id).join(',');
+    if (signature == _sourceSignature) return;
+    final wasEmpty = _sourceSignature.isEmpty;
+    _sourceSignature = signature;
+    if (visible.isEmpty) {
+      setState(() {
+        _items = [];
+        _hasMore = false;
+        _loading = false;
+        _loadingMore = false;
+      });
+      return;
+    }
+    final allowed = visible.map((site) => site.id).toSet();
+    if (!wasEmpty &&
+        allowed.contains(_source.id) &&
+        _source.id == widget.store.source) {
+      return;
+    }
+    _changeSource(SourceSite.byId(widget.store.source));
   }
 
   void _catalogUpdated(String source) {
@@ -393,8 +424,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onCatalogScroll);
     _source = SourceSite.byId(widget.store.source);
     _allSources = widget.store.catalogView.allSources;
+    _sourceSignature = widget.store.sources.map((site) => site.id).join(',');
     _browser = CatalogBrowser(widget.repository);
     _updater = LibraryUpdater(
       widget.repository,
@@ -402,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onCatalogChanged: _catalogUpdated,
     )..addListener(_updateChanged);
     _updater.startWatching();
+    widget.store.addListener(_sourcesChanged);
     widget.repository.catalogUpdates.addListener(_metadataChanged);
     if (widget.store.sources.isNotEmpty) {
       _load(useCache: true);
@@ -416,6 +450,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _updater.removeListener(_updateChanged);
     _updater.dispose();
     _cacheRefreshTimer?.cancel();
+    widget.store.removeListener(_sourcesChanged);
     widget.repository.catalogUpdates.removeListener(_metadataChanged);
     _generation++;
     _categoryGeneration++;
@@ -423,8 +458,36 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(widget.repository.cancelSuggestions());
     _debounce?.cancel();
     _search.dispose();
+    _scroll.removeListener(_onCatalogScroll);
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onCatalogScroll() {
+    if (!mounted ||
+        _showRecommendations ||
+        !_hasMore ||
+        _loading ||
+        _loadingMore ||
+        !_scroll.hasClients) {
+      return;
+    }
+    final position = _scroll.position;
+    final threshold = (position.viewportDimension * 1.5).clamp(320.0, 900.0);
+    if (position.extentAfter > threshold || _catalogLoadScheduled) return;
+    _catalogLoadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _catalogLoadScheduled = false;
+      if (!mounted ||
+          _showRecommendations ||
+          !_hasMore ||
+          _loading ||
+          _loadingMore ||
+          !_scroll.hasClients) {
+        return;
+      }
+      unawaited(_load(more: true));
+    });
   }
 
   void _metadataChanged() {
@@ -456,7 +519,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _error = null;
       if (query.isNotEmpty) _categorySelections[group.id] = '';
-      _failedMore = false;
       if (more) {
         _loadingMore = true;
       } else {
@@ -498,7 +560,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _loading = false;
         _loadingMore = false;
         _error = error.toString();
-        _failedMore = more;
       });
     }
   }
@@ -513,7 +574,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _showRecommendations = false;
       _selectionMode = false;
       _selectedDramas.clear();
-      _updateNotice = false;
       _source = source;
       _allSources = allSources;
       _items = [];
@@ -586,15 +646,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openDrama(Drama drama, {bool resume = false, bool download = false}) {
     _pauseCatalog();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DetailScreen(
-          drama: drama,
-          repository: widget.repository,
-          store: widget.store,
-          resumeOnOpen: resume,
-          downloadOnOpen: download,
+    if (download) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => DetailScreen(
+            drama: drama,
+            repository: widget.repository,
+            store: widget.store,
+            downloadOnOpen: true,
+          ),
         ),
+      );
+      return;
+    }
+    unawaited(
+      openPlaybackDirectly(
+        context,
+        drama: drama,
+        repository: widget.repository,
+        store: widget.store,
       ),
     );
   }
@@ -604,6 +674,25 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectionMode = false;
     _selectedDramas.clear();
   });
+
+  /// 连点「最近观看」6 次弹出站源密码锁（用于启用 / 关闭密码功能）。
+  /// 仅多源包（真果鉴）生效；红果鉴单源包无密码功能。
+  void _onNavSelected(int tab) {
+    if (allSourcesEnabled && tab == 2) {
+      if (_recentTaps.register(tab)) {
+        _openSourceGate();
+        return;
+      }
+    } else {
+      _recentTaps.reset();
+    }
+    _changeTab(tab);
+  }
+
+  void _openSourceGate() {
+    _pauseCatalog();
+    unawaited(showSourceGateDialog(context, widget.store));
+  }
 
   void _cancelSelection() => setState(() {
     _selectionMode = false;
@@ -683,7 +772,7 @@ class _HomeScreenState extends State<HomeScreen> {
       selected: _selectionMode ? _selectedDramas.containsKey(drama.id) : null,
       badge: following == null
           ? null
-          : '${following.status.label}${following.newEpisodes > 0 ? ' · 更新 ${following.newEpisodes} 集' : ''}',
+          : '${following.status.label}${following.hasUpdates ? ' · ${following.updateLabel}' : ''}',
     );
   }
 
@@ -794,7 +883,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('取消'),
                 ),
               ] else ...[
-                if (_tab == 1)
+                if (_tab == 1 && !liteEnabled)
                   IconButton(
                     key: const ValueKey('follow-lan-sync'),
                     tooltip: '追剧同步',
@@ -869,7 +958,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute<void>(
-                          builder: (_) => SettingsScreen(
+                          builder: (_) => liteEnabled
+                              ? LiteSettingsScreen(store: widget.store)
+                              : SettingsScreen(
                             repository: widget.repository,
                             store: widget.store,
                           ),
@@ -918,12 +1009,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         value: 'sources',
                         child: Text('站源管理'),
                       ),
-                    const PopupMenuItem(value: 'users', child: Text('用户管理')),
+                    if (!liteEnabled)
+                      const PopupMenuItem(value: 'users', child: Text('用户管理')),
                     const PopupMenuItem(
                       value: 'settings',
                       child: Text('设置与备份'),
                     ),
-                    const PopupMenuItem(value: 'display', child: Text('界面模式')),
+                    if (!liteEnabled)
+                      const PopupMenuItem(value: 'display', child: Text('界面模式')),
                     const PopupMenuItem(
                       value: 'about',
                       child: Text('关于$appName'),
@@ -961,7 +1054,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 icon: entry.$2.$1,
                                 selected: _tab == entry.$1,
                                 autofocus: entry.$1 == 0,
-                                onPressed: () => _changeTab(entry.$1),
+                                onPressed: () => _onNavSelected(entry.$1),
                               ),
                             ),
                         ],
@@ -972,7 +1065,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ] else if (desktop) ...[
                   NavigationRail(
                     selectedIndex: _tab,
-                    onDestinationSelected: _changeTab,
+                    onDestinationSelected: _onNavSelected,
                     labelType: NavigationRailLabelType.all,
                     groupAlignment: -.8,
                     destinations: [
@@ -1038,7 +1131,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ? _selectionBar()
               : AppBottomNavigation(
                   selectedIndex: _tab,
-                  onDestinationSelected: _changeTab,
+                  onDestinationSelected: _onNavSelected,
                   destinations: [
                     NavigationDestination(
                       icon: Icon(Icons.explore_outlined),
@@ -1177,48 +1270,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           )
         else ...[
-          if (widget.repository.supportsSourceManagement &&
-              (_updateNotice ||
-                  _group.sources.any((source) => _updater.busy(source.id))))
-            _updateStatus(),
           if (_loading && _items.isNotEmpty)
             const LinearProgressIndicator(minHeight: 2),
-          if (_error != null && _items.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _error!,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _loading || _loadingMore
-                        ? null
-                        : () => _load(more: _failedMore, force: true),
-                    child: const Text('重试'),
-                  ),
-                  if (widget.repository.supportsSourceManagement)
-                    IconButton(
-                      tooltip: '站源诊断',
-                      onPressed: _manageSources,
-                      icon: const Icon(Icons.network_check),
-                    ),
-                ],
-              ),
-            ),
           Expanded(
             child: GestureDetector(
               onHorizontalDragEnd: television ? null : _swipeCategory,
@@ -1430,71 +1483,6 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _updateStatus() {
-    final sources = _group.sources;
-    final busy = sources.any((source) => _updater.busy(source.id));
-    final messages = <String>[];
-    var failed = false;
-    for (final source in sources) {
-      final status = _updater.status(source.id);
-      final error = [
-        _updater.error(source.id),
-        status?.error ?? '',
-        status?.storageError ?? '',
-      ].where((value) => value.isNotEmpty).toSet().join('；');
-      if (error.isNotEmpty) {
-        failed = true;
-        messages.add('${source.name}：$error');
-      } else if (status != null) {
-        messages.add(
-          '${source.name}：${status.stage.isEmpty ? '准备更新' : status.stage}'
-          '${status.total > 0 ? ' ${status.completed}/${status.total}' : ''}'
-          '${!status.running && status.added > 0 ? ' · 新增 ${status.added} 部' : ''}',
-        );
-      } else if (busy) {
-        messages.add('${source.name}：正在启动');
-      }
-    }
-    final colors = Theme.of(context).colorScheme;
-    return Material(
-      color: failed ? colors.errorContainer : colors.surfaceContainerHighest,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                messages.isEmpty ? '准备更新剧库' : messages.join('；'),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: failed ? colors.onErrorContainer : colors.onSurface,
-                ),
-              ),
-            ),
-            if (busy)
-              TextButton(
-                onPressed: () => _updater.stop(sources),
-                child: const Text('停止'),
-              ),
-            IconButton(
-              tooltip: '查看更新详情',
-              onPressed: _manageSources,
-              icon: const Icon(Icons.info_outline_rounded, size: 20),
-            ),
-            if (!busy)
-              IconButton(
-                tooltip: '收起更新提示',
-                onPressed: () => setState(() => _updateNotice = false),
-                icon: const Icon(Icons.close_rounded, size: 20),
-              ),
-          ],
         ),
       ),
     );
